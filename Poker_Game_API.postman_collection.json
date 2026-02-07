@@ -1,0 +1,571 @@
+{
+  "info": {
+    "name": "Poker Game - Phase 5 API Testing",
+    "description": "Complete API testing collection for multiplayer poker game with Phase 5 security features",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "version": "1.0.0"
+  },
+  "item": [
+    {
+      "name": "Health & Monitoring",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/health",
+              "host": ["{{base_url}}"],
+              "path": ["health"]
+            }
+          }
+        },
+        {
+          "name": "Metrics (Prometheus)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/metrics",
+              "host": ["{{base_url}}"],
+              "path": ["metrics"]
+            }
+          }
+        },
+        {
+          "name": "Admin Metrics Dashboard",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/admin/metrics",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "metrics"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Authentication",
+      "item": [
+        {
+          "name": "Register User",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"testuser@pokergame.com\",\n  \"password\": \"SecurePass123!\",\n  \"firstName\": \"Test\",\n  \"lastName\": \"User\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/auth/register",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "register"]
+            }
+          }
+        },
+        {
+          "name": "Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"testuser@pokergame.com\",\n  \"password\": \"SecurePass123!\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/auth/login",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "login"]
+            }
+          }
+        },
+        {
+          "name": "Refresh Token",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{refresh_token}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/auth/refresh",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "refresh"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "2FA (Two-Factor Authentication)",
+      "item": [
+        {
+          "name": "Enable 2FA",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"testuser@pokergame.com\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/security/2fa/enable",
+              "host": ["{{base_url}}"],
+              "path": ["api", "security", "2fa", "enable"]
+            }
+          }
+        },
+        {
+          "name": "Verify 2FA Setup",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"123456\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/security/2fa/verify-setup",
+              "host": ["{{base_url}}"],
+              "path": ["api", "security", "2fa", "verify-setup"]
+            }
+          }
+        },
+        {
+          "name": "Get 2FA Status",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/security/2fa/status",
+              "host": ["{{base_url}}"],
+              "path": ["api", "security", "2fa", "status"]
+            }
+          }
+        },
+        {
+          "name": "Use Backup Code",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"backupCode\": \"BACKUP_CODE_1\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/security/2fa/backup-code",
+              "host": ["{{base_url}}"],
+              "path": ["api", "security", "2fa", "backup-code"]
+            }
+          }
+        },
+        {
+          "name": "Disable 2FA",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"password\": \"SecurePass123!\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/security/2fa/disable",
+              "host": ["{{base_url}}"],
+              "path": ["api", "security", "2fa", "disable"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Game Tables",
+      "item": [
+        {
+          "name": "Create Game Table",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"blinds\": {\n    \"small\": 1,\n    \"big\": 2\n  },\n  \"buyIn\": 100,\n  \"maxPlayers\": 6\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/game/tables",
+              "host": ["{{base_url}}"],
+              "path": ["api", "game", "tables"]
+            }
+          }
+        },
+        {
+          "name": "Join Game",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"buyIn\": 100\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/game/tables/{{game_id}}/join",
+              "host": ["{{base_url}}"],
+              "path": ["api", "game", "tables", "{{game_id}}", "join"]
+            }
+          }
+        },
+        {
+          "name": "Get Game State",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/game/tables/{{game_id}}/state",
+              "host": ["{{base_url}}"],
+              "path": ["api", "game", "tables", "{{game_id}}", "state"]
+            }
+          }
+        },
+        {
+          "name": "Player Action (Bet)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"bet\",\n  \"amount\": 50,\n  \"tableId\": \"{{game_id}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/game/tables/{{game_id}}/action",
+              "host": ["{{base_url}}"],
+              "path": ["api", "game", "tables", "{{game_id}}", "action"]
+            }
+          }
+        },
+        {
+          "name": "Player Action (Check)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"check\",\n  \"tableId\": \"{{game_id}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/game/tables/{{game_id}}/action",
+              "host": ["{{base_url}}"],
+              "path": ["api", "game", "tables", "{{game_id}}", "action"]
+            }
+          }
+        },
+        {
+          "name": "Verify Shuffle",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"seed\": \"random_seed_123\",\n  \"deck\": []\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/game/tables/{{game_id}}/verify-shuffle",
+              "host": ["{{base_url}}"],
+              "path": ["api", "game", "tables", "{{game_id}}", "verify-shuffle"]
+            }
+          }
+        },
+        {
+          "name": "Cash Out",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"winnings\": 250\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/game/tables/{{game_id}}/cash-out",
+              "host": ["{{base_url}}"],
+              "path": ["api", "game", "tables", "{{game_id}}", "cash-out"]
+            }
+          }
+        },
+        {
+          "name": "Get Hand History",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/game/tables/{{game_id}}/history",
+              "host": ["{{base_url}}"],
+              "path": ["api", "game", "tables", "{{game_id}}", "history"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Compliance & KYC",
+      "item": [
+        {
+          "name": "Initiate KYC",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"firstName\": \"Test\",\n  \"lastName\": \"User\",\n  \"dateOfBirth\": \"1990-01-15\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/security/kyc/initiate",
+              "host": ["{{base_url}}"],
+              "path": ["api", "security", "kyc", "initiate"]
+            }
+          }
+        },
+        {
+          "name": "Get KYC Status",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/security/kyc/status",
+              "host": ["{{base_url}}"],
+              "path": ["api", "security", "kyc", "status"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Financial & Responsible Gaming",
+      "item": [
+        {
+          "name": "Deposit",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 500,\n  \"paymentMethod\": \"credit_card\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/security/financial/deposit",
+              "host": ["{{base_url}}"],
+              "path": ["api", "security", "financial", "deposit"]
+            }
+          }
+        },
+        {
+          "name": "Enable Self-Exclusion",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"duration\": \"7d\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/security/responsible-gaming/self-exclude",
+              "host": ["{{base_url}}"],
+              "path": ["api", "security", "responsible-gaming", "self-exclude"]
+            }
+          }
+        },
+        {
+          "name": "Get Compliance Dashboard",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/security/compliance/dashboard",
+              "host": ["{{base_url}}"],
+              "path": ["api", "security", "compliance", "dashboard"]
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:3000",
+      "type": "string"
+    },
+    {
+      "key": "access_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "refresh_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "game_id",
+      "value": "",
+      "type": "string"
+    }
+  ]
+}

@@ -1,0 +1,240 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "CloudFormation template for Multiplayer Poker Game deployment",
+  "Parameters": {
+    "Environment": {
+      "Type": "String",
+      "Default": "production",
+      "AllowedValues": ["development", "staging", "production"],
+      "Description": "Deployment environment"
+    },
+    "DBInstanceClass": {
+      "Type": "String",
+      "Default": "db.t3.medium",
+      "Description": "RDS instance type"
+    },
+    "DBAllocatedStorage": {
+      "Type": "Number",
+      "Default": 100,
+      "MinValue": 20,
+      "MaxValue": 65536,
+      "Description": "Database allocated storage in GB"
+    }
+  },
+  "Resources": {
+    "ECSCluster": {
+      "Type": "AWS::ECS::Cluster",
+      "Properties": {
+        "ClusterName": {"Fn::Sub": "poker-game-${Environment}"},
+        "ClusterSettings": [
+          {
+            "Name": "containerInsights",
+            "Value": "enabled"
+          }
+        ]
+      }
+    },
+
+    "RDSSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Security group for RDS",
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 5432,
+            "ToPort": 5432,
+            "SourceSecurityGroupId": {"Ref": "ECSSecurityGroup"}
+          }
+        ]
+      }
+    },
+
+    "ECSSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Security group for ECS tasks",
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 80,
+            "ToPort": 80,
+            "CidrIp": "0.0.0.0/0"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 443,
+            "ToPort": 443,
+            "CidrIp": "0.0.0.0/0"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 3000,
+            "ToPort": 3001,
+            "SourceSecurityGroupId": {"Ref": "ALBSecurityGroup"}
+          }
+        ]
+      }
+    },
+
+    "ALBSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Security group for Application Load Balancer",
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 80,
+            "ToPort": 80,
+            "CidrIp": "0.0.0.0/0"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 443,
+            "ToPort": 443,
+            "CidrIp": "0.0.0.0/0"
+          }
+        ]
+      }
+    },
+
+    "RDSInstance": {
+      "Type": "AWS::RDS::DBInstance",
+      "Properties": {
+        "DBName": "pokergame",
+        "Engine": "postgres",
+        "EngineVersion": "15.3",
+        "DBInstanceClass": {"Ref": "DBInstanceClass"},
+        "AllocatedStorage": {"Ref": "DBAllocatedStorage"},
+        "StorageType": "gp3",
+        "StorageEncrypted": true,
+        "MasterUsername": {"Ref": "DBUser"},
+        "MasterUserPassword": {"Ref": "DBPassword"},
+        "VPCSecurityGroups": [{"Ref": "RDSSecurityGroup"}],
+        "BackupRetentionPeriod": 30,
+        "PreferredBackupWindow": "03:00-04:00",
+        "PreferredMaintenanceWindow": "sun:04:00-sun:05:00",
+        "EnableCloudwatchLogsExports": ["postgresql"],
+        "EnableIAMDatabaseAuthentication": true,
+        "DeletionProtection": true,
+        "MultiAZ": {"Fn::If": ["IsProduction", true, false]}
+      }
+    },
+
+    "ElastiCacheCluster": {
+      "Type": "AWS::ElastiCache::ReplicationGroup",
+      "Properties": {
+        "Engine": "redis",
+        "EngineVersion": "7.0",
+        "ReplicationGroupDescription": "Redis cache for Poker Game",
+        "CacheNodeType": "cache.t3.micro",
+        "NumCacheClusters": 2,
+        "AutomaticFailoverEnabled": true,
+        "AtRestEncryptionEnabled": true,
+        "TransitEncryptionEnabled": true,
+        "SecurityGroupIds": [{"Ref": "ElastiCacheSecurityGroup"}]
+      }
+    },
+
+    "ElastiCacheSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Security group for ElastiCache",
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 6379,
+            "ToPort": 6379,
+            "SourceSecurityGroupId": {"Ref": "ECSSecurityGroup"}
+          }
+        ]
+      }
+    },
+
+    "ECRRepository": {
+      "Type": "AWS::ECR::Repository",
+      "Properties": {
+        "RepositoryName": "poker-game-backend",
+        "ImageScanningConfiguration": {
+          "ScanOnPush": true
+        },
+        "EncryptionConfiguration": {
+          "EncryptionType": "KMS"
+        },
+        "LifecyclePolicy": {
+          "LifecyclePolicyText": {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep last 10 images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 10
+                },
+                "action": {
+                  "type": "expire"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+
+    "ApplicationLoadBalancer": {
+      "Type": "AWS::ElasticLoadBalancingV2::LoadBalancer",
+      "Properties": {
+        "Name": {"Fn::Sub": "poker-alb-${Environment}"},
+        "Type": "application",
+        "Scheme": "internet-facing",
+        "SecurityGroups": [{"Ref": "ALBSecurityGroup"}]
+      }
+    },
+
+    "CloudWatchLogGroup": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": {
+          "Fn::Sub": "/ecs/poker-game/${Environment}"
+        },
+        "RetentionInDays": 30
+      }
+    },
+
+    "ECSTaskExecutionRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "ecs-tasks.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+        ]
+      }
+    }
+  },
+  "Outputs": {
+    "RDSEndpoint": {
+      "Value": {"Fn::GetAtt": ["RDSInstance", "Endpoint.Address"]},
+      "Description": "RDS endpoint"
+    },
+    "ECRRepositoryUri": {
+      "Value": {"Fn::GetAtt": ["ECRRepository", "RepositoryUri"]},
+      "Description": "ECR repository URI"
+    },
+    "CloudWatchLogGroup": {
+      "Value": {"Ref": "CloudWatchLogGroup"},
+      "Description": "CloudWatch log group"
+    }
+  }
+}
