@@ -1,7 +1,6 @@
-const Redis = require('ioredis');
 const logger = require('../utils/logger');
-
-const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
+// Use shared redis client (configured with retry/backoff) to avoid duplicate connections
+const { client: redis } = require('../config/redis');
 
 /**
  * Rate limiter with progressive penalties and violation tracking

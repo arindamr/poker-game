@@ -66,6 +66,19 @@ chmod +x test-local.sh
 
 ---
 
+### Compose startup stability improvements
+
+To avoid race conditions where services (backend/websocket) start before Redis/Postgres are ready, the deployment now includes a small helper that waits for dependent TCP ports:
+
+- `backend/wait-for-services.js` — checks TCP connectivity to Redis and Postgres and exits non-zero on timeout.
+- `deployment/aws/docker-compose.yml` — both `backend` and `websocket` services run the wait script before launching the Node process.
+
+This prevents early crashes due to `ECONNREFUSED` or DNS lookup failures for the `redis` hostname. If you change Redis/Postgres host or ports, update the environment variables used by compose (`REDIS_URL`, `REDIS_HOST`, `REDIS_PORT`, `DB_HOST`, `DB_PORT`).
+
+If you prefer the wait logic baked into the image instead of run via compose, convert the compose `command` to an `ENTRYPOINT` wrapper in the Dockerfile.
+
+---
+
 ## 🧬 Manual Testing
 
 ### Test 1: Health Check

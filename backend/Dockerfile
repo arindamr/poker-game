@@ -21,9 +21,9 @@ RUN addgroup -g 1001 -S nodejs && adduser -S nodejs -u 1001
 RUN chown -R nodejs:nodejs /app
 USER nodejs
 
-# Health check
+# Health check (use PORT env if present)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD node -e "require('http').get('http://localhost:3000/health', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"
+  CMD node -e "const p = process.env.PORT || 3000; require('http').get('http://localhost:' + p + '/health', (r) => { if (r.statusCode !== 200) throw new Error(r.statusCode) })"
 
 # Use dumb-init to handle signals properly
 ENTRYPOINT ["dumb-init", "--"]

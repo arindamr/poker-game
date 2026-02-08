@@ -2,19 +2,34 @@ const Redis = require('ioredis');
 const config = require('./env');
 const logger = require('../utils/logger');
 
-const redisClient = new Redis({
-  host: config.redis.host,
-  port: config.redis.port,
-  password: config.redis.password || undefined,
-  family: 4, // Force IPv4
-  retryStrategy: (retries) => {
-    if (retries > 10) {
-      logger.error('Max Redis reconnection attempts reached');
-      return new Error('Max retries reached');
-    }
-    return retries * 50;
-  },
-});
+let redisClient;
+if (process.env.REDIS_URL) {
+  // Prefer full URL when provided by compose/env
+  redisClient = new Redis(process.env.REDIS_URL, {
+    family: 4,
+    retryStrategy: (retries) => {
+      if (retries > 10) {
+        logger.error('Max Redis reconnection attempts reached');
+        return new Error('Max retries reached');
+      }
+      return retries * 50;
+    },
+  });
+} else {
+  redisClient = new Redis({
+    host: config.redis.host,
+    port: config.redis.port,
+    password: config.redis.password || undefined,
+    family: 4, // Force IPv4
+    retryStrategy: (retries) => {
+      if (retries > 10) {
+        logger.error('Max Redis reconnection attempts reached');
+        return new Error('Max retries reached');
+      }
+      return retries * 50;
+    },
+  });
+}
 
 redisClient.on('connect', () => {
   logger.info('Connected to Redis');

@@ -65,6 +65,7 @@ services:
     volumes:
       - ../../backend/src:/app/src
       - /app/node_modules
+    command: ["sh", "-c", "node /app/wait-for-services.js && node src/index.js"]
     networks:
       - poker_network
     restart: unless-stopped
@@ -86,11 +87,20 @@ services:
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
       LOG_LEVEL: ${LOG_LEVEL}
       SERVICE_TYPE: websocket
+    command: ["sh", "-c", "node /app/wait-for-services.js && node src/index.js"]
     ports:
       - "3001:3001"
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"const p=process.env.PORT||3001; require('http').get('http://localhost:' + p + '/health', (r) => { if (r.statusCode !== 200) throw new Error(r.statusCode) })\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
     volumes:
       - ../../backend/src:/app/src
       - /app/node_modules
