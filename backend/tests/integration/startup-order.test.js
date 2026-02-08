@@ -4,8 +4,9 @@ const execp = util.promisify(exec);
 
 jest.setTimeout(180000);
 
-const COMPOSE = '../../deployment/aws/docker-compose.yml';
-const composeCmd = (cmd) => `docker-compose -f ${COMPOSE} ${cmd}`;
+const COMPOSE = '../deployment/aws/docker-compose.yml';
+const COMPOSE_TEST = '../deployment/aws/docker-compose.test.yml';
+const composeCmd = (cmd) => `docker-compose -f ${COMPOSE} -f ${COMPOSE_TEST} ${cmd}`;
 
 async function waitForLog(container, regex, timeoutMs = 60000) {
   const start = Date.now();
