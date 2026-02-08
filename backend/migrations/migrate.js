@@ -6,7 +6,7 @@ const logger = require('../src/utils/logger');
 /**
  * Run database migrations
  */
-const runMigrations = async () => {
+const runMigrations = async (options = {}) => {
   try {
     const migrationsDir = path.join(__dirname, '../migrations');
     const files = fs.readdirSync(migrationsDir)
@@ -39,12 +39,15 @@ const runMigrations = async () => {
     logger.error('Migration failed', { error: error.message });
     throw error;
   } finally {
-    await db.close();
+    // Only close pool if not in test mode and closePool option is true
+    if (require.main === module || options.closePool) {
+      await db.close();
+    }
   }
 };
 
 if (require.main === module) {
-  runMigrations()
+  runMigrations({ closePool: true })
     .then(() => process.exit(0))
     .catch(() => process.exit(1));
 }
