@@ -25,7 +25,9 @@ USER nodejs
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
   CMD node -e "const p = process.env.PORT || 3000; require('http').get('http://localhost:' + p + '/health', (r) => { if (r.statusCode !== 200) throw new Error(r.statusCode) })"
 
-# Use dumb-init to handle signals properly
-ENTRYPOINT ["dumb-init", "--"]
+# Use dumb-init to handle signals properly and run our entrypoint wrapper
+COPY docker-entrypoint.sh /app/docker-entrypoint.sh
+RUN chmod +x /app/docker-entrypoint.sh
+ENTRYPOINT ["dumb-init", "--", "/app/docker-entrypoint.sh"]
 
 CMD ["node", "src/index.js"]
