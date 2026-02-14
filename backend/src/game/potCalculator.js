@@ -33,21 +33,23 @@ class PotCalculator {
       .map(([playerId, amount]) => ({
         playerId,
         amount,
-        stack: playerStacks[playerId] || 0,
+        stack: playerStacks?.[playerId] || 0,
       }))
       .sort((a, b) => a.amount - b.amount);
 
     const pots = [];
     let previousAmount = 0;
 
-    for (const contrib of contributions) {
+    for (let i = 0; i < contributions.length; i++) {
+      const contrib = contributions[i];
       if (contrib.amount > previousAmount) {
-        const potSize = (contrib.amount - previousAmount);
-        const potAmount = potSize * contributions.length; // Each player contributes this amount
+        const potSize = contrib.amount - previousAmount;
+        const eligible = contributions.slice(i).map((c) => c.playerId);
+        const potAmount = potSize * eligible.length;
 
         pots.push({
           size: potAmount,
-          contributors: contributions.map(c => c.playerId),
+          contributors: eligible,
           minContribution: contrib.amount,
         });
 
@@ -77,19 +79,57 @@ class PotCalculator {
    * @param {number} rake - Rake amount to deduct
    * @returns {Object} Distribution details
    */
-  distributePot(winners, rake = 0) {
+  distributePot(winners, rake = 0, options = null) {
     if (winners.length === 0) {
       throw new Error('No winners specified');
     }
 
     const distribution = {};
     const totalPot = this.mainPot - rake;
-    const winAmount = Math.floor(totalPot / winners.length);
-    const remainder = totalPot % winners.length;
 
-    winners.forEach((winner, index) => {
-      distribution[winner.playerId] = winAmount + (index < remainder ? 1 : 0);
-    });
+    if (options?.sidePots?.length && options?.handEvaluations) {
+      const sidePots = options.sidePots;
+      const handEvaluations = options.handEvaluations;
+
+      sidePots.forEach((pot, potIndex) => {
+        let potSize = pot.size;
+        if (potIndex === 0 && rake > 0) {
+          potSize = Math.max(0, pot.size - rake);
+        }
+
+        const eligiblePlayers = pot.contributors.filter((playerId) => handEvaluations[playerId]);
+        if (eligiblePlayers.length === 0 || potSize === 0) {
+          return;
+        }
+
+        let bestValue = -Infinity;
+        eligiblePlayers.forEach((playerId) => {
+          const value = handEvaluations[playerId].value;
+          if (value > bestValue) {
+            bestValue = value;
+          }
+        });
+
+        const potWinners = eligiblePlayers.filter(
+          (playerId) => handEvaluations[playerId].value === bestValue,
+        );
+
+        const winAmount = Math.floor(potSize / potWinners.length);
+        const remainder = potSize % potWinners.length;
+
+        potWinners.forEach((playerId, index) => {
+          const payout = winAmount + (index < remainder ? 1 : 0);
+          distribution[playerId] = (distribution[playerId] || 0) + payout;
+        });
+      });
+    } else {
+      const winAmount = Math.floor(totalPot / winners.length);
+      const remainder = totalPot % winners.length;
+
+      winners.forEach((winner, index) => {
+        distribution[winner.playerId] = winAmount + (index < remainder ? 1 : 0);
+      });
+    }
 
     logger.info('Pot distributed', {
       totalPot: this.mainPot,

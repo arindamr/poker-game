@@ -13,6 +13,11 @@ const rateLimiter = require('../middleware/enhancedRateLimiter');
 const { authenticateToken, authorizeRole } = require('./middleware/authMiddleware');
 const logger = require('../utils/logger');
 
+const isSchemaError = (error) => {
+  const code = error?.code;
+  return code === '42703' || code === '42P01';
+};
+
 /**
  * 2FA Management Endpoints
  */
@@ -51,6 +56,9 @@ router.post('/2fa/enable', authenticateToken, rateLimiter.middleware({ max: 10, 
     });
   } catch (error) {
     logger.error('2FA enable error:', error);
+    if (isSchemaError(error)) {
+      return res.status(501).json({ error: '2FA not implemented' });
+    }
     res.status(500).json({ error: 'Failed to enable 2FA' });
   }
 });
@@ -105,6 +113,9 @@ router.post('/2fa/verify-setup', authenticateToken, rateLimiter.middleware({ max
     res.json({ message: '2FA successfully enabled' });
   } catch (error) {
     logger.error('2FA verify setup error:', error);
+    if (isSchemaError(error)) {
+      return res.status(501).json({ error: '2FA not implemented' });
+    }
     res.status(500).json({ error: 'Failed to verify 2FA' });
   }
 });
@@ -145,6 +156,9 @@ router.post('/2fa/disable', authenticateToken, rateLimiter.middleware({ max: 5, 
     res.json({ message: '2FA successfully disabled' });
   } catch (error) {
     logger.error('2FA disable error:', error);
+    if (isSchemaError(error)) {
+      return res.status(501).json({ error: '2FA not implemented' });
+    }
     res.status(500).json({ error: 'Failed to disable 2FA' });
   }
 });
@@ -157,6 +171,9 @@ router.get('/2fa/status', authenticateToken, async (req, res) => {
     res.json(status);
   } catch (error) {
     logger.error('2FA status error:', error);
+    if (isSchemaError(error)) {
+      return res.status(501).json({ error: '2FA not implemented' });
+    }
     res.status(500).json({ error: 'Failed to get 2FA status' });
   }
 });
@@ -182,6 +199,9 @@ router.post('/2fa/backup-code', authenticateToken, rateLimiter.middleware({ max:
     res.json({ message: 'Backup code verified', remaining: result.remaining });
   } catch (error) {
     logger.error('Backup code error:', error);
+    if (isSchemaError(error)) {
+      return res.status(501).json({ error: '2FA not implemented' });
+    }
     res.status(500).json({ error: 'Failed to use backup code' });
   }
 });

@@ -4,19 +4,43 @@
  */
 
 require('dotenv').config();
-const { server } = require('./server');
+const { app, server } = require('./server');
 const config = require('./config/env');
 const logger = require('./utils/logger');
+const User = require('./models/User');
+const { hashPassword } = require('./utils/crypto');
 
 // Get port from config
 const PORT = config.port || 3000;
 
-// Start the server
-server.listen(PORT, () => {
-  logger.info(`🚀 Poker Game Backend running on port ${PORT}`);
-  logger.info(`Environment: ${config.nodeEnv}`);
-  logger.info(`Database: ${config.database.host}:${config.database.port}/${config.database.name}`);
-});
+// Start the server only when run directly
+if (require.main === module) {
+  const seedDemoUser = async () => {
+    if (config.nodeEnv !== 'development' || process.env.SEED_DEMO_USER === 'false') {
+      return;
+    }
+    const demoEmail = 'test@example.com';
+    const demoPassword = 'Demo@123456';
+    try {
+      const existing = await User.findByEmail(demoEmail);
+      if (!existing) {
+        const passwordHash = await hashPassword(demoPassword);
+        await User.create('demo', demoEmail, passwordHash, '127.0.0.1');
+        logger.info('Demo user created', { email: demoEmail });
+      }
+    } catch (error) {
+      logger.error('Demo user seed failed', { error: error.message });
+    }
+  };
+
+  seedDemoUser().finally(() => {
+    server.listen(PORT, () => {
+      logger.info(`🚀 Poker Game Backend running on port ${PORT}`);
+      logger.info(`Environment: ${config.nodeEnv}`);
+      logger.info(`Database: ${config.database.host}:${config.database.port}/${config.database.name}`);
+    });
+  });
+}
 
 // Handle graceful shutdown
 process.on('SIGTERM', () => {
@@ -46,3 +70,5 @@ process.on('unhandledRejection', (reason, promise) => {
   logger.error('Unhandled Rejection at:', promise, 'reason:', reason);
   process.exit(1);
 });
+
+module.exports = { app, server };

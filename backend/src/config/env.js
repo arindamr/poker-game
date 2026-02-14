@@ -58,6 +58,11 @@ module.exports = {
   
   // CORS
   cors: {
-    origin: (process.env.CORS_ORIGIN || 'http://localhost:5000,http://localhost:3000').split(','),
+    origin: (process.env.CORS_ORIGIN || 'http://localhost:5000,http://localhost:3000,http://localhost:3002').split(','),
+  },
+
+  // Admin
+  admin: {
+    emails: (process.env.ADMIN_EMAILS || '').split(',').map((email) => email.trim()).filter(Boolean),
   },
 };

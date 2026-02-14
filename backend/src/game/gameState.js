@@ -33,7 +33,7 @@ class GameStateMachine {
   constructor(gameId, tableId, players, smallBlind, bigBlind) {
     this.gameId = gameId;
     this.tableId = tableId;
-    this.players = players; // Array of { id, stack, seat }
+    this.players = [...players].sort((a, b) => a.seat - b.seat); // Array of { id, stack, seat }
     this.smallBlind = smallBlind;
     this.bigBlind = bigBlind;
 
@@ -46,8 +46,12 @@ class GameStateMachine {
     this.actions = [];
     this.handNumber = 0;
     this.buttonPosition = 0;
-    this.activePlayers = [...players];
+    this.activePlayers = [...this.players];
     this.folded = new Set();
+    this.pendingActions = new Set();
+    this.currentActorIndex = 0;
+    this.currentActorId = null;
+    this.lastAggressorId = null;
 
     // Shuffle deck
     this.initializeDeck();
@@ -59,6 +63,146 @@ class GameStateMachine {
   initializeDeck() {
     this.deck = SecureShuffler.generateDeck();
     this.deck = SecureShuffler.shuffleDeck(this.deck);
+  }
+
+  /**
+   * Prepare a new hand
+   */
+  startHand() {
+    this.state = GAME_STATE.PRE_GAME;
+    this.communityCards = [];
+    this.pot = 0;
+    this.sidePots = [];
+    this.currentBet = 0;
+    this.actions = [];
+    this.folded.clear();
+    this.activePlayers = [...this.players];
+    this.pendingActions.clear();
+    this.lastAggressorId = null;
+    this.currentActorId = null;
+    this.currentActorIndex = 0;
+    this.handNumber += 1;
+
+    if (this.activePlayers.length > 0) {
+      this.buttonPosition = (this.buttonPosition + 1) % this.activePlayers.length;
+    }
+  }
+
+  getPlayerIndex(playerId) {
+    return this.activePlayers.findIndex((p) => p.id === playerId);
+  }
+
+  getStartIndexPreflop() {
+    if (this.activePlayers.length === 0) return 0;
+    if (this.activePlayers.length === 2) {
+      const bigIndex = (this.buttonPosition + 1) % this.activePlayers.length;
+      return (bigIndex + 1) % this.activePlayers.length;
+    }
+    const bigIndex = (this.buttonPosition + 2) % this.activePlayers.length;
+    return (bigIndex + 1) % this.activePlayers.length;
+  }
+
+  getStartIndexPostflop() {
+    if (this.activePlayers.length === 0) return 0;
+    return (this.buttonPosition + 1) % this.activePlayers.length;
+  }
+
+  isBettingRoundComplete() {
+    return this.pendingActions.size === 0;
+  }
+
+  /**
+   * Post blinds and return blind info for pot tracking
+   */
+  postBlinds() {
+    if (this.activePlayers.length === 0) {
+      return [];
+    }
+
+    let smallIndex = (this.buttonPosition + 1) % this.activePlayers.length;
+    let bigIndex = (smallIndex + 1) % this.activePlayers.length;
+
+    if (this.activePlayers.length === 2) {
+      smallIndex = this.buttonPosition;
+      bigIndex = (this.buttonPosition + 1) % this.activePlayers.length;
+    }
+
+    const smallPlayer = this.activePlayers[smallIndex];
+    const bigPlayer = this.activePlayers[bigIndex];
+    const smallAmount = Math.min(this.smallBlind, smallPlayer.stack);
+    const bigAmount = Math.min(this.bigBlind, bigPlayer.stack);
+
+    smallPlayer.stack -= smallAmount;
+    bigPlayer.stack -= bigAmount;
+    this.pot += smallAmount + bigAmount;
+    this.currentBet = bigAmount;
+    this.lastAggressorId = bigPlayer.id;
+
+    this.actions.push({
+      playerId: smallPlayer.id,
+      action: 'SMALL_BLIND',
+      amount: smallAmount,
+      timestamp: new Date().toISOString(),
+    });
+    this.actions.push({
+      playerId: bigPlayer.id,
+      action: 'BIG_BLIND',
+      amount: bigAmount,
+      timestamp: new Date().toISOString(),
+    });
+
+    return [
+      { playerId: smallPlayer.id, amount: smallAmount },
+      { playerId: bigPlayer.id, amount: bigAmount },
+    ];
+  }
+
+  /**
+   * Initialize betting round and current actor
+   */
+  startBettingRound(startIndex) {
+    this.pendingActions = new Set(this.getActivePlayers().map((p) => p.id));
+    this.currentActorIndex = startIndex % this.activePlayers.length;
+    this.currentActorId = null;
+    this.advanceToNextActor();
+  }
+
+  /**
+   * Advance to next actor who is pending and active
+   */
+  advanceToNextActor() {
+    if (this.pendingActions.size === 0) {
+      this.currentActorId = null;
+      return;
+    }
+
+    let attempts = 0;
+    while (attempts < this.activePlayers.length) {
+      const player = this.activePlayers[this.currentActorIndex];
+      if (player && !this.folded.has(player.id) && this.pendingActions.has(player.id)) {
+        this.currentActorId = player.id;
+        return;
+      }
+      this.currentActorIndex = (this.currentActorIndex + 1) % this.activePlayers.length;
+      attempts += 1;
+    }
+    this.currentActorId = null;
+  }
+
+  /**
+   * Mark action complete and adjust pending actions
+   */
+  recordActionCompletion(playerId, action) {
+    this.pendingActions.delete(playerId);
+
+    if (action === ACTION.RAISE || action === ACTION.ALL_IN) {
+      this.lastAggressorId = playerId;
+      this.pendingActions = new Set(this.getActivePlayers().map((p) => p.id));
+      this.pendingActions.delete(playerId);
+    }
+
+    this.currentActorIndex = (this.currentActorIndex + 1) % this.activePlayers.length;
+    this.advanceToNextActor();
   }
 
   /**
@@ -109,6 +253,10 @@ class GameStateMachine {
     const player = this.activePlayers.find(p => p.id === playerId);
     if (!player) {
       throw new Error('Player not found');
+    }
+
+    if (this.currentActorId && playerId !== this.currentActorId) {
+      throw new Error('Not player turn');
     }
 
     switch (action) {
@@ -167,6 +315,8 @@ class GameStateMachine {
       amount,
       timestamp: new Date().toISOString(),
     });
+
+    this.recordActionCompletion(playerId, action);
   }
 
   /**
@@ -183,18 +333,21 @@ class GameStateMachine {
         this.state = GAME_STATE.FLOP;
         this.dealFlop();
         this.currentBet = 0;
+        this.lastAggressorId = null;
         break;
 
       case GAME_STATE.FLOP:
         this.state = GAME_STATE.TURN;
         this.dealTurn();
         this.currentBet = 0;
+        this.lastAggressorId = null;
         break;
 
       case GAME_STATE.TURN:
         this.state = GAME_STATE.RIVER;
         this.dealRiver();
         this.currentBet = 0;
+        this.lastAggressorId = null;
         break;
 
       case GAME_STATE.RIVER:
@@ -229,7 +382,7 @@ class GameStateMachine {
    * Deal turn (4th community card)
    */
   dealTurn() {
-    const startIndex = this.activePlayers.length * 2 + 4; // After flop
+    const startIndex = this.activePlayers.length * 2 + 5; // After flop and burn
     this.communityCards.push(this.deck[startIndex]);
     logger.debug('Turn dealt', { card: this.deck[startIndex] });
   }
@@ -238,7 +391,7 @@ class GameStateMachine {
    * Deal river (5th community card)
    */
   dealRiver() {
-    const startIndex = this.activePlayers.length * 2 + 6; // After turn
+    const startIndex = this.activePlayers.length * 2 + 7; // After turn and burn
     this.communityCards.push(this.deck[startIndex]);
     logger.debug('River dealt', { card: this.deck[startIndex] });
   }
@@ -276,6 +429,7 @@ class GameStateMachine {
       communityCards: this.communityCards,
       activePlayers: this.getActivePlayers().length,
       currentBet: this.currentBet,
+      currentActorId: this.currentActorId,
     };
   }
 
@@ -293,6 +447,10 @@ class GameStateMachine {
     this.actions = [];
     this.folded.clear();
     this.buttonPosition = (this.buttonPosition + 1) % this.activePlayers.length;
+    this.pendingActions.clear();
+    this.currentActorId = null;
+    this.currentActorIndex = 0;
+    this.lastAggressorId = null;
 
     this.initializeDeck();
     logger.debug('Game reset for next hand', { handNumber: this.handNumber });

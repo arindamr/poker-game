@@ -1,5 +1,6 @@
 const { verifyToken } = require('../../utils/crypto');
 const logger = require('../../utils/logger');
+const config = require('../../config/env');
 
 /**
  * Authenticate JWT token
@@ -35,6 +36,11 @@ const authenticateToken = (req, res, next) => {
     });
   }
 
+  // Normalize user id to support legacy routes that read req.user.id
+  if (payload && payload.sub && !payload.id) {
+    payload.id = payload.sub;
+  }
+
   req.user = payload;
   next();
 };
@@ -49,6 +55,9 @@ const optionalAuth = (req, res, next) => {
   if (token) {
     const payload = verifyToken(token);
     if (payload.sub) {
+      if (!payload.id) {
+        payload.id = payload.sub;
+      }
       req.user = payload;
     }
   }
@@ -78,4 +87,15 @@ module.exports = {
   authenticateToken,
   optionalAuth,
   authorizeRole,
+  requireAdmin: (req, res, next) => {
+    if (!req.user?.email) {
+      return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
+    const allowed = config.admin?.emails || [];
+    if (allowed.length === 0 || !allowed.includes(req.user.email)) {
+      logger.warn('Admin access denied', { userId: req.user.sub, email: req.user.email });
+      return res.status(403).json({ success: false, error: 'Admin access required' });
+    }
+    return next();
+  },
 };

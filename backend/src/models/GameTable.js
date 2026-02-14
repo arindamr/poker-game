@@ -44,7 +44,7 @@ const GameTable = {
     try {
       return await db.getAll(
         `SELECT id, name, small_blind, big_blind, min_buy_in, max_buy_in, 
-                max_seats, current_players, status, created_at
+                max_seats, current_players, status, created_at, created_by
          FROM game_tables WHERE status = 'WAITING' OR status = 'RUNNING'
          ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
         [limit, offset],
@@ -90,10 +90,34 @@ const GameTable = {
    */
   delete: async (tableId) => {
     try {
-      await db.query(
-        `DELETE FROM game_tables WHERE id = $1`,
-        [tableId],
-      );
+      await db.transaction(async (client) => {
+        const gameIdsRes = await client.query(
+          'SELECT id FROM games WHERE table_id = $1',
+          [tableId],
+        );
+        const gameIds = gameIdsRes.rows.map((row) => row.id);
+
+        if (gameIds.length > 0) {
+          await client.query(
+            'DELETE FROM rng_audit WHERE game_id = ANY($1::uuid[])',
+            [gameIds],
+          );
+          await client.query(
+            'DELETE FROM games WHERE table_id = $1',
+            [tableId],
+          );
+        }
+
+        await client.query(
+          'DELETE FROM table_seats WHERE table_id = $1',
+          [tableId],
+        );
+
+        await client.query(
+          'DELETE FROM game_tables WHERE id = $1',
+          [tableId],
+        );
+      });
     } catch (error) {
       logger.error('Error deleting table', { tableId, error: error.message });
       throw error;

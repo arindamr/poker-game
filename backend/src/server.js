@@ -9,11 +9,15 @@ const db = require('./config/database');
 const redis = require('./config/redis');
 const { initializeWebSocket } = require('./websocket/socketHandler');
 const { registerGameEvents } = require('./websocket/gameEvents');
+const { setIO } = require('./websocket/io');
+const User = require('./models/User');
+const { hashPassword } = require('./utils/crypto');
 
 // Phase 5 Security Imports
 const securityHeaders = require('./middleware/securityHeaders');
 const enhancedRateLimiter = require('./middleware/enhancedRateLimiter');
 const monitoringService = require('./monitoring/monitoringService');
+const { authenticateToken } = require('./api/middleware/authMiddleware');
 
 // Routes
 const authRoutes = require('./api/routes/auth');
@@ -21,6 +25,7 @@ const userRoutes = require('./api/routes/users');
 const tableRoutes = require('./api/routes/tables');
 const securityRoutes = require('./api/securityRoutes');
 const gameRoutes = require('./api/gameRoutes');
+const adminRoutes = require('./api/routes/admin');
 
 // Initialize Express app
 const app = express();
@@ -51,12 +56,14 @@ app.use(express.urlencoded({ limit: '10kb', extended: true }));
 // 5. Enhanced rate limiting (Progressive penalties)
 if (config.security.enableRateLimiting) {
   app.use('/api/', enhancedRateLimiter.middleware({
-    max: 1000,      // 1000 requests
-    window: 60000,  // per minute
+    maxAttempts: 1000,      // 1000 requests
+    windowMs: 60000,        // per minute
+    endpoint: 'api_general',
   }));
   app.use('/api/auth/login', enhancedRateLimiter.middleware({
-    max: 5,         // 5 login attempts
-    window: 60000,  // per minute
+    maxAttempts: 5,         // 5 login attempts
+    windowMs: 60000,        // per minute
+    endpoint: 'auth_login',
   }));
 }
 
@@ -90,15 +97,18 @@ app.use((req, res, next) => {
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
 
 // Metrics endpoint (Prometheus format)
-app.get('/metrics', (req, res) => {
+app.get('/metrics', authenticateToken, (req, res) => {
   res.set('Content-Type', 'text/plain');
   res.send(monitoringService.getPrometheusMetrics());
 });
 
 // Admin metrics dashboard
-app.get('/admin/metrics', (req, res) => {
+app.get('/admin/metrics', authenticateToken, (req, res) => {
   res.json(monitoringService.getMetricsSnapshot());
 });
 
@@ -108,10 +118,14 @@ app.get('/admin/metrics', (req, res) => {
 
 // Authentication routes (public)
 app.use('/api/v1/auth', authRoutes);
+// Backwards-compatible auth routes for integration tests
+app.use('/api/auth', securityRoutes);
+app.use('/api/auth', authRoutes);
 
 // Legacy routes (existing functionality)
 app.use('/api/v1/users', userRoutes);
 app.use('/api/v1/tables', tableRoutes);
+app.use('/api/v1/admin', adminRoutes);
 
 // Phase 5 Security Routes
 app.use('/api/security', securityRoutes);      // 2FA, KYC, AML, SAR
@@ -128,12 +142,19 @@ app.use((req, res) => {
 // Initialize WebSocket
 const io = initializeWebSocket(server);
 registerGameEvents(io);
+setIO(io);
 
 /**
  * Start server
  */
 const start = async () => {
   try {
+    if (config.nodeEnv !== 'development') {
+      if (config.jwt.secret === 'dev-secret-key-change-in-production' ||
+          config.jwt.refreshSecret === 'dev-refresh-secret') {
+        throw new Error('JWT secrets must be configured for non-development environments');
+      }
+    }
     // Connect to Redis
     await redis.connect();
     logger.info('Redis connected');
@@ -141,6 +162,18 @@ const start = async () => {
     // Test database connection
     await db.query('SELECT 1');
     logger.info('Database connected');
+
+    // Seed demo user in development when enabled
+    if (config.nodeEnv === 'development' && process.env.SEED_DEMO_USER !== 'false') {
+      const demoEmail = 'test@example.com';
+      const demoPassword = 'Demo@123456';
+      const existing = await User.findByEmail(demoEmail);
+      if (!existing) {
+        const passwordHash = await hashPassword(demoPassword);
+        await User.create('demo', demoEmail, passwordHash, '127.0.0.1');
+        logger.info('Demo user created', { email: demoEmail });
+      }
+    }
 
     // Start listening
     server.listen(config.port, () => {

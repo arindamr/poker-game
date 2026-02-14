@@ -6,18 +6,59 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../config/database');
-const gameEngine = require('../game/engine');
+const PokerEngine = require('../game/engine');
+const config = require('../config/env');
 const antiCheatEngine = require('../game/antiCheatEngine');
 const complianceService = require('../utils/complianceService');
 const rateLimiter = require('../middleware/enhancedRateLimiter');
 const { authenticateToken } = require('./middleware/authMiddleware');
+
+// In-memory engine instances per game table
+const activeEngines = new Map();
+
+const buildPlayers = (rows) => rows.map((row) => ({
+  id: row.user_id,
+  stack: Number(row.stack),
+  seat: row.position,
+}));
+
+const getEngineForGame = async (gameId) => {
+  const existing = activeEngines.get(gameId);
+  if (existing) {
+    return existing;
+  }
+
+  const playersResult = await db.query(
+    'SELECT user_id, stack, position FROM game_players WHERE game_id = $1 ORDER BY position',
+    [gameId]
+  );
+
+  const players = buildPlayers(playersResult.rows);
+  if (players.length === 0) {
+    throw new Error('No players available to start game');
+  }
+
+  const tableResult = await db.query(
+    'SELECT small_blind, big_blind FROM game_tables WHERE id = $1',
+    [gameId]
+  );
+
+  const table = tableResult.rows[0] || {};
+  const smallBlind = Number(table.small_blind ?? config.game.smallBlind);
+  const bigBlind = Number(table.big_blind ?? config.game.bigBlind);
+
+  const engine = new PokerEngine(gameId, gameId, players, smallBlind, bigBlind);
+  await engine.startHand();
+  activeEngines.set(gameId, engine);
+  return engine;
+};
 const logger = require('../utils/logger');
 const monitoringService = require('../monitoring/monitoringService');
 
 /**
  * Create Game Table
  */
-router.post('/tables', authenticateToken, rateLimiter.middleware({ max: 20, window: 60000 }), async (req, res) => {
+router.post('/tables', authenticateToken, rateLimiter.middleware({ maxAttempts: 20, windowMs: 60000, endpoint: 'create_table' }), async (req, res) => {
   try {
     const userId = req.user.id;
     const { blinds, buyIn, maxPlayers } = req.body;
@@ -37,8 +78,8 @@ router.post('/tables', authenticateToken, rateLimiter.middleware({ max: 20, wind
     }
 
     // Verify user has sufficient balance
-    const user = await db.query('SELECT balance FROM users WHERE id = $1', [userId]);
-    if (user.rows[0].balance < buyIn) {
+    const user = await db.query('SELECT account_balance FROM users WHERE id = $1', [userId]);
+    if (user.rows[0].account_balance < buyIn) {
       return res.status(400).json({ error: 'Insufficient balance' });
     }
 
@@ -77,7 +118,7 @@ router.post('/tables', authenticateToken, rateLimiter.middleware({ max: 20, wind
 /**
  * Join Game Table
  */
-router.post('/tables/:gameId/join', authenticateToken, rateLimiter.middleware({ max: 50, window: 60000 }), async (req, res) => {
+router.post('/tables/:gameId/join', authenticateToken, rateLimiter.middleware({ maxAttempts: 50, windowMs: 60000, endpoint: 'join_table' }), async (req, res) => {
   try {
     const userId = req.user.id;
     const { gameId } = req.params;
@@ -115,24 +156,24 @@ router.post('/tables/:gameId/join', authenticateToken, rateLimiter.middleware({ 
     }
 
     // Verify sufficient balance
-    const user = await db.query('SELECT balance FROM users WHERE id = $1', [userId]);
-    if (user.rows[0].balance < buyIn) {
+    const user = await db.query('SELECT account_balance FROM users WHERE id = $1', [userId]);
+    if (user.rows[0].account_balance < buyIn) {
       return res.status(400).json({ error: 'Insufficient balance' });
     }
 
     // Check for multi-account cheating
     const multiAccountRisk = await antiCheatEngine.detectMultiAccount(userId);
-    if (multiAccountRisk > 0.7) {
-      logger.warn(`Multi-account detection: user ${userId}, risk ${multiAccountRisk}`);
+    if (multiAccountRisk.score > 0.7) {
+      logger.warn(`Multi-account detection: user ${userId}, risk ${multiAccountRisk.score}`);
 
       await db.query(
         `INSERT INTO cheat_detection 
          (user_id, game_id, suspicion_type, risk_score) 
          VALUES ($1, $2, $3, $4)`,
-        [userId, gameId, 'multi_account', multiAccountRisk]
+        [userId, gameId, 'multi_account', multiAccountRisk.score]
       );
 
-      if (multiAccountRisk > 0.85) {
+      if (multiAccountRisk.score > 0.85) {
         await db.query('UPDATE users SET is_banned = true WHERE id = $1', [userId]);
         return res.status(403).json({ error: 'Account banned' });
       }
@@ -146,7 +187,7 @@ router.post('/tables/:gameId/join', authenticateToken, rateLimiter.middleware({ 
     );
 
     // Deduct buy-in from user balance
-    await db.query('UPDATE users SET balance = balance - $1 WHERE id = $2', [buyIn, userId]);
+    await db.query('UPDATE users SET account_balance = account_balance - $1 WHERE id = $2', [buyIn, userId]);
 
     logger.info(`User ${userId} joined game ${gameId}`);
     monitoringService.recordMetric('game.players_joined', 1);
@@ -166,7 +207,7 @@ router.post('/tables/:gameId/join', authenticateToken, rateLimiter.middleware({ 
 /**
  * Player Action (Bet, Check, Fold, etc.)
  */
-router.post('/tables/:gameId/action', authenticateToken, rateLimiter.middleware({ max: 100, window: 10000 }), async (req, res) => {
+router.post('/tables/:gameId/action', authenticateToken, rateLimiter.middleware({ maxAttempts: 100, windowMs: 10000, endpoint: 'table_action' }), async (req, res) => {
   try {
     const userId = req.user.id;
     const { gameId } = req.params;
@@ -180,17 +221,17 @@ router.post('/tables/:gameId/action', authenticateToken, rateLimiter.middleware(
     // **Anti-Cheat: RTA Detection**
     const rtaRisk = await antiCheatEngine.detectRTA(gameId, userId, timeSinceLastAction);
 
-    if (rtaRisk > 0.7) {
-      logger.warn(`RTA suspicion: user ${userId}, game ${gameId}, risk ${rtaRisk}`);
+    if (rtaRisk.score > 0.7) {
+      logger.warn(`RTA suspicion: user ${userId}, game ${gameId}, risk ${rtaRisk.score}`);
 
       await db.query(
         `INSERT INTO cheat_detection 
          (user_id, game_id, suspicion_type, risk_score, details) 
          VALUES ($1, $2, $3, $4, $5)`,
-        [userId, gameId, 'rta', rtaRisk, JSON.stringify({ timeSinceLastAction, action })]
+        [userId, gameId, 'rta', rtaRisk.score, JSON.stringify({ timeSinceLastAction, action })]
       );
 
-      if (rtaRisk > 0.85) {
+      if (rtaRisk.score > 0.85) {
         return res.status(403).json({ error: 'Action flagged as suspicious' });
       }
     }
@@ -206,15 +247,8 @@ router.post('/tables/:gameId/action', authenticateToken, rateLimiter.middleware(
     }
 
     // Process action
-    const gameState = await db.query('SELECT state FROM game_tables WHERE id = $1', [gameId]);
-
-    const result = await gameEngine.processAction({
-      gameId,
-      playerId: userId,
-      action,
-      amount,
-      state: gameState.rows[0].state,
-    });
+    const engine = await getEngineForGame(gameId);
+    const result = await engine.processPlayerAction(userId, action, amount);
 
     // **Compliance: Check for unusual betting patterns**
     if (amount && amount > 10000) {
@@ -287,9 +321,9 @@ router.post('/tables/:gameId/verify-shuffle', authenticateToken, async (req, res
     const { seed, deck } = req.body;
 
     // **Anti-Cheat: Shuffle Verification**
-    const isValid = await antiCheatEngine.verifyShuffle(gameId, seed, deck);
+    const shuffleResult = await antiCheatEngine.verifyShuffle(gameId, seed, deck);
 
-    if (!isValid) {
+    if (!shuffleResult.verified) {
       logger.error(`Invalid shuffle detected: game ${gameId}`);
 
       // Record cheat detection
@@ -352,7 +386,7 @@ router.post('/tables/:gameId/cash-out', authenticateToken, async (req, res) => {
 
     // Credit winnings to user balance
     await db.query(
-      'UPDATE users SET balance = balance + $1 WHERE id = $2',
+      'UPDATE users SET account_balance = account_balance + $1 WHERE id = $2',
       [finalStack, userId]
     );
 

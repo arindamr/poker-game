@@ -4,7 +4,7 @@
  */
 
 const request = require('supertest');
-const app = require('../src/index');
+const { app } = require('../src/server');
 const db = require('../src/database');
 const redis = require('../src/utils/redis');
 const { generateJWT } = require('../src/utils/auth');
@@ -16,8 +16,58 @@ describe('Phase 5 Security Features', () => {
   let authToken;
   let adminToken;
   let refreshToken;
+  const getOrCreateUser = async ({ username, email, password }) => {
+    const passwordHash = await hashPassword(password);
+    try {
+      return await User.create(username, email, passwordHash, '127.0.0.1');
+    } catch (error) {
+      // Try to locate by email or username
+      const byEmail = await User.findByEmail(email);
+      if (byEmail) {
+        return byEmail;
+      }
+      const byUsername = await User.findByUsername(username);
+      if (byUsername) {
+        return byUsername;
+      }
+      // Fallback: create with unique username but same email
+      const uniqueUsername = `${username}${Date.now()}`;
+      return await User.create(uniqueUsername, email, passwordHash, '127.0.0.1');
+    }
+  };
 
   beforeAll(async () => {
+    const waitForDb = async (attempts = 30, delayMs = 1000) => {
+      for (let i = 0; i < attempts; i++) {
+        try {
+          await db.query('SELECT 1');
+          return;
+        } catch (error) {
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+        }
+      }
+      throw new Error('Database not ready');
+    };
+
+    const waitForRedis = async (attempts = 30, delayMs = 1000) => {
+      for (let i = 0; i < attempts; i++) {
+        try {
+          if (redis.client && typeof redis.client.ping === 'function') {
+            await redis.client.ping();
+            return;
+          }
+          await redis.get('healthcheck');
+          return;
+        } catch (error) {
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+        }
+      }
+      throw new Error('Redis not ready');
+    };
+
+    await waitForDb();
+    await waitForRedis();
+
     // Setup test database
     try {
       await db.migrate();
@@ -29,50 +79,20 @@ describe('Phase 5 Security Features', () => {
     const testUserData = {
       username: 'testuser',
       email: 'test@pokergame.com',
-      password: 'password123',
+      password: 'Password123',
     };
-    const passwordHash = await hashPassword(testUserData.password);
-    try {
-      const user = await User.create(
-        testUserData.username,
-        testUserData.email,
-        passwordHash,
-        '127.0.0.1'
-      );
-      testUserId = user.id;
-      authToken = generateJWT({ sub: user.id, username: user.username, email: user.email });
-    } catch (error) {
-      console.error('User creation error (may already exist):', error.message);
-      // Attempt to find and use existing user
-      const user = await User.findByEmail(testUserData.email);
-      if (user) {
-        testUserId = user.id;
-        authToken = generateJWT({ sub: user.id, username: user.username, email: user.email });
-      }
-    }
+    const user = await getOrCreateUser(testUserData);
+    testUserId = user.id;
+    authToken = generateJWT({ sub: user.id, username: user.username, email: user.email });
 
     // Create admin user
     const adminUserData = {
       username: 'admin',
       email: 'admin@pokergame.com',
-      password: 'adminpass123',
+      password: 'Adminpass123',
     };
-    const adminPasswordHash = await hashPassword(adminUserData.password);
-    try {
-      const admin = await User.create(
-        adminUserData.username,
-        adminUserData.email,
-        adminPasswordHash,
-        '127.0.0.1'
-      );
-      adminToken = generateJWT({ sub: admin.id, username: admin.username, email: admin.email });
-    } catch (error) {
-      console.error('Admin creation error (may already exist):', error.message);
-      const admin = await User.findByEmail(adminUserData.email);
-      if (admin) {
-        adminToken = generateJWT({ sub: admin.id, username: admin.username, email: admin.email });
-      }
-    }
+    const admin = await getOrCreateUser(adminUserData);
+    adminToken = generateJWT({ sub: admin.id, username: admin.username, email: admin.email });
   });
 
   afterAll(async () => {
@@ -210,17 +230,19 @@ describe('Phase 5 Security Features', () => {
       const account1Res = await request(app)
         .post('/api/auth/register')
         .send({
-          username: 'user1-test',
+          username: 'user1test',
           email: 'user1@pokergame.com',
-          password: 'password123',
+          password: 'Password123',
+          confirmPassword: 'Password123',
         });
 
       const account2Res = await request(app)
         .post('/api/auth/register')
         .send({
-          username: 'user2-test',
+          username: 'user2test',
           email: 'user2@pokergame.com',
-          password: 'password123',
+          password: 'Password123',
+          confirmPassword: 'Password123',
         });
 
       // Should be flagged for multi-account investigation

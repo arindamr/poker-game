@@ -31,6 +31,8 @@ class PokerEngine {
    */
   async startHand() {
     try {
+      this.stateMachine.startHand();
+      this.potCalculator.reset();
       this.stateMachine.initializeDeck();
 
       // Record game in database
@@ -52,6 +54,18 @@ class PokerEngine {
       // Deal hole cards
       const holeCards = this.stateMachine.dealHoleCards();
       this.playerHands = holeCards;
+
+      // Post blinds and update pot
+      const blindBets = this.stateMachine.postBlinds();
+      blindBets.forEach((blind) => {
+        if (blind.amount > 0) {
+          this.potCalculator.addBet(blind.playerId, blind.amount);
+        }
+      });
+
+      // Start betting round (pre-flop)
+      this.stateMachine.state = GAME_STATE.PRE_FLOP;
+      this.stateMachine.startBettingRound(this.stateMachine.getStartIndexPreflop());
 
       // Record hole cards in database
       for (const [playerId, cards] of Object.entries(holeCards)) {
@@ -81,6 +95,20 @@ class PokerEngine {
    */
   async processPlayerAction(playerId, action, amount = 0) {
     try {
+      const numericAmount = Number(amount) || 0;
+      const actingPlayer = this.stateMachine.players.find((p) => p.id === playerId);
+      const preStack = actingPlayer ? actingPlayer.stack : 0;
+      const preCurrentBet = this.stateMachine.currentBet || 0;
+      let effectiveAmount = numericAmount;
+
+      if (action === ACTION.CALL && effectiveAmount === 0) {
+        effectiveAmount = Math.min(preCurrentBet, preStack);
+      }
+
+      if (action === ACTION.ALL_IN && effectiveAmount === 0) {
+        effectiveAmount = preStack;
+      }
+
       // Validate action
       const actionOrder = this.actionIndex++;
 
@@ -90,23 +118,25 @@ class PokerEngine {
         actionOrder,
         playerId,
         action,
-        amount,
+        effectiveAmount,
         this.stateMachine.state,
       );
 
       // Process in state machine
-      this.stateMachine.processAction(playerId, action, amount);
+      this.stateMachine.processAction(playerId, action, numericAmount);
 
       // Update pot
       if (action === ACTION.CALL || action === ACTION.RAISE || action === ACTION.ALL_IN) {
-        this.potCalculator.addBet(playerId, amount);
+        if (effectiveAmount > 0) {
+          this.potCalculator.addBet(playerId, effectiveAmount);
+        }
       }
 
       logger.info('Player action processed', {
         gameId: this.gameId,
         playerId,
         action,
-        amount,
+        amount: effectiveAmount,
         pot: this.potCalculator.getPot(),
       });
 
@@ -114,6 +144,15 @@ class PokerEngine {
       const activePlayers = this.stateMachine.getActivePlayers();
       if (activePlayers.length === 1) {
         return await this.endHand();
+      }
+
+      // Advance streets when betting round completes
+      if (this.stateMachine.isBettingRoundComplete()) {
+        if (this.stateMachine.state === GAME_STATE.RIVER) {
+          return await this.endHand();
+        }
+        await this.advanceStreet();
+        this.stateMachine.startBettingRound(this.stateMachine.getStartIndexPostflop());
       }
 
       return this.getGameState();
@@ -140,6 +179,21 @@ class PokerEngine {
         await HandHistoryRecorder.recordCommunityCards(
           this.gameId,
           this.stateMachine.communityCards,
+          0,
+        );
+      }
+      if (this.stateMachine.state === GAME_STATE.TURN) {
+        await HandHistoryRecorder.recordCommunityCards(
+          this.gameId,
+          [this.stateMachine.communityCards[3]],
+          3,
+        );
+      }
+      if (this.stateMachine.state === GAME_STATE.RIVER) {
+        await HandHistoryRecorder.recordCommunityCards(
+          this.gameId,
+          [this.stateMachine.communityCards[4]],
+          4,
         );
       }
 
@@ -239,40 +293,35 @@ class PokerEngine {
       // Calculate rake
       const rake = this.potCalculator.calculateRake(this.potCalculator.getPot());
 
-      // Distribute pot
-      const distribution = this.potCalculator.distributePot(winners, rake);
+      // Calculate side pots for all-in scenarios
+      const sidePots = this.potCalculator.calculateSidePots();
 
-      // Create results
+      // Distribute pot (handles side pots if present)
+      const distribution = this.potCalculator.distributePot(winners, rake, {
+        sidePots,
+        handEvaluations: playerEvaluations,
+      });
+
+      // Create results for all active players based on distribution
       const results = [];
-      let finishPosition = 1;
+      const payoutByPlayer = distribution.distribution || {};
+      const sortedPlayers = [...activePlayers].sort(
+        (a, b) => (payoutByPlayer[b.id] || 0) - (payoutByPlayer[a.id] || 0),
+      );
 
-      for (const winner of winners) {
-        const player = activePlayers.find(p => p.id === winner.playerId);
+      sortedPlayers.forEach((player, index) => {
+        const winAmount = payoutByPlayer[player.id] || 0;
+        const bestHand = playerEvaluations[player.id]?.name || 'Unknown';
         results.push({
-          playerId: winner.playerId,
+          playerId: player.id,
           position: player.seat,
-          holeCards: this.playerHands[winner.playerId].join(''),
-          bestHand: winner.hand.name,
-          finalStack: player.stack + distribution.distribution[winner.playerId],
-          winAmount: distribution.distribution[winner.playerId],
-          finishPosition,
+          holeCards: this.playerHands[player.id].join(''),
+          bestHand,
+          finalStack: player.stack + winAmount,
+          winAmount,
+          finishPosition: index + 1,
         });
-      }
-
-      // Losers
-      for (const player of activePlayers) {
-        if (!winners.find(w => w.playerId === player.id)) {
-          results.push({
-            playerId: player.id,
-            position: player.seat,
-            holeCards: this.playerHands[player.id].join(''),
-            bestHand: playerEvaluations[player.id].name,
-            finalStack: player.stack,
-            winAmount: 0,
-            finishPosition: results.length + 1,
-          });
-        }
-      }
+      });
 
       await HandHistoryRecorder.recordGameResult(this.gameId, results);
 
@@ -315,6 +364,8 @@ class PokerEngine {
       })),
       activePlayers: this.stateMachine.getActivePlayers().length,
       currentBet: this.stateMachine.currentBet,
+      currentActorId: this.stateMachine.currentActorId,
+      buttonPosition: this.stateMachine.buttonPosition,
     };
   }
 

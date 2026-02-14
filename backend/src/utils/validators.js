@@ -41,6 +41,8 @@ const validators = {
         .required(),
       password: Joi.string()
         .required(),
+      twoFactorToken: Joi.string()
+        .optional(),
     });
     return schema.validate(data);
   },

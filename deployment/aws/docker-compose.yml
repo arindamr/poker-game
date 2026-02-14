@@ -55,6 +55,9 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
       LOG_LEVEL: ${LOG_LEVEL}
+      CORS_ORIGIN: ${CORS_ORIGIN}
+      SEED_DEMO_USER: ${SEED_DEMO_USER}
+      ADMIN_EMAILS: ${ADMIN_EMAILS}
     ports:
       - "3000:3000"
     depends_on:

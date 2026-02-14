@@ -52,13 +52,13 @@ class HandHistoryRecorder {
   /**
    * Record community cards
    */
-  static async recordCommunityCards(gameId, cards) {
+  static async recordCommunityCards(gameId, cards, startIndex = 0) {
     try {
       for (let i = 0; i < cards.length; i++) {
         await db.query(
           `INSERT INTO community_cards (game_id, card_position, card)
            VALUES ($1, $2, $3)`,
-          [gameId, i, cards[i]],
+          [gameId, i + startIndex, cards[i]],
         );
       }
 
