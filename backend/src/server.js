@@ -42,8 +42,34 @@ app.use(securityHeaders.securityHeadersMiddleware);
 app.use(compression());
 
 // 3. CORS configuration
-app.use(cors({ 
-  origin: config.cors.origin,
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow non-browser clients without an Origin header.
+    if (!origin) {
+      return callback(null, true);
+    }
+
+    const normalizedOrigin = origin.toLowerCase();
+    const allowed = new Set((config.cors.origin || []).map((o) => o.toLowerCase()));
+
+    if (allowed.has(normalizedOrigin)) {
+      return callback(null, true);
+    }
+
+    // In development, allow .local hostnames for LAN testing convenience.
+    if (config.nodeEnv === 'development') {
+      try {
+        const parsed = new URL(origin);
+        if (parsed.hostname === 'localhost' || parsed.hostname.endsWith('.local')) {
+          return callback(null, true);
+        }
+      } catch (error) {
+        // Fall through to CORS rejection.
+      }
+    }
+
+    return callback(new Error('Not allowed by CORS'));
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],

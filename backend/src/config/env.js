@@ -58,7 +58,10 @@ module.exports = {
   
   // CORS
   cors: {
-    origin: (process.env.CORS_ORIGIN || 'http://localhost:5000,http://localhost:3000,http://localhost:3002').split(','),
+    origin: (process.env.CORS_ORIGIN || 'http://localhost:5000,http://localhost:3000,http://localhost:3002,http://arindams-macbook-air.local:3002')
+      .split(',')
+      .map((origin) => origin.trim())
+      .filter(Boolean),
   },
 
   // Admin
