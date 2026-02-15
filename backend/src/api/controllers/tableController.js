@@ -9,6 +9,162 @@ const { asyncHandler } = require('../middleware/errorHandler');
 const { validateTableCreation } = require('../../utils/validators');
 const logger = require('../../utils/logger');
 
+const nextHandConfirmations = new Map();
+const lastCompletedRoundByTable = new Map();
+
+const getTableStatusBySeatedCount = (seatedCount) => (
+  seatedCount >= 2 ? 'RUNNING' : 'WAITING'
+);
+
+const syncTableCounters = async (client, tableId, seatedCount) => {
+  await client.query(
+    'UPDATE game_tables SET current_players = $1, status = $2 WHERE id = $3',
+    [seatedCount, getTableStatusBySeatedCount(seatedCount), tableId],
+  );
+};
+
+const clearNextHandTracking = (tableId) => {
+  nextHandConfirmations.delete(tableId);
+  lastCompletedRoundByTable.delete(tableId);
+};
+
+const getHumanRowsForTable = async (tableId) => db.getAll(
+  `SELECT ts.player_id, ts.position, u.username
+   FROM table_seats ts
+   JOIN users u ON u.id = ts.player_id
+   WHERE ts.table_id = $1 AND ts.is_seated = true AND u.username NOT LIKE 'BOT_%'
+   ORDER BY ts.position`,
+  [tableId],
+);
+
+const syncRoundTracking = (tableId, roundResult) => {
+  if (!roundResult?.gameId) {
+    return;
+  }
+
+  const gameId = roundResult.gameId;
+  const trackedGameId = lastCompletedRoundByTable.get(tableId);
+  if (trackedGameId !== gameId) {
+    nextHandConfirmations.set(tableId, new Set());
+    lastCompletedRoundByTable.set(tableId, gameId);
+  }
+};
+
+const buildNextHandStatus = (tableId, userId, roundResult, humanRows) => {
+  if (!roundResult?.gameId) {
+    return null;
+  }
+
+  syncRoundTracking(tableId, roundResult);
+  const confirmedSet = nextHandConfirmations.get(tableId) || new Set();
+  const requiredIds = humanRows.map((row) => row.player_id);
+  const waitingFor = humanRows
+    .filter((row) => !confirmedSet.has(row.player_id))
+    .map((row) => ({
+      playerId: row.player_id,
+      username: row.username,
+      seat: row.position,
+    }));
+  const confirmed = requiredIds.filter((id) => confirmedSet.has(id)).length;
+
+  return {
+    required: requiredIds.length,
+    confirmed,
+    hasConfirmed: !!(userId && confirmedSet.has(userId)),
+    waitingFor,
+  };
+};
+
+const getBotRowsForTable = async (tableId) => db.getAll(
+  `SELECT ts.player_id, u.username
+   FROM table_seats ts
+   JOIN users u ON u.id = ts.player_id
+   WHERE ts.table_id = $1 AND ts.is_seated = true AND u.username LIKE 'BOT_%'
+   ORDER BY ts.position`,
+  [tableId],
+);
+
+const processBotTurns = async (engine, tableId) => {
+  const botRows = await getBotRowsForTable(tableId);
+  if (botRows.length === 0) {
+    return [];
+  }
+
+  const botIds = new Set(botRows.map((row) => row.player_id));
+  const botActions = [];
+  let guard = 0;
+  let gameState = engine.getGameState();
+
+  while (!engine.isCompleted() && gameState.currentActorId && botIds.has(gameState.currentActorId)) {
+    if (guard++ > 15) break; // safety guard
+
+    const player = gameState.players.find((p) => p.id === gameState.currentActorId);
+    if (!player || player.folded) {
+      break;
+    }
+
+    const decision = decideBotAction(gameState, player, engine.stateMachine.bigBlind || 0);
+    try {
+      await engine.processPlayerAction(player.id, decision.action, decision.amount || 0);
+      botActions.push({
+        playerId: player.id,
+        action: decision.action,
+        amount: decision.amount || 0,
+      });
+      gameState = engine.getGameState();
+    } catch (error) {
+      logger.warn('Bot action failed', {
+        tableId,
+        playerId: player.id,
+        error: error.message,
+      });
+      break;
+    }
+  }
+
+  return botActions;
+};
+
+const emitRoundCompleted = (io, tableId, roundResult) => {
+  if (!io || !roundResult) return;
+  io.to(`table:${tableId}`).emit('HAND_COMPLETED', {
+    tableId,
+    result: roundResult,
+  });
+};
+
+const BOT_FIRST_NAMES = [
+  'Gary', 'Mildred', 'Benny', 'Dottie', 'Frankie', 'Wanda', 'Lenny', 'Trudy', 'Ricky', 'Pat',
+];
+const BOT_LAST_NAMES = [
+  'McBluff', 'Pocketpants', 'Riverdance', 'Flopinski', 'Chipwhistle', 'Cardigan', 'Allinstein', 'Foldsworth',
+];
+const BOT_NICKNAMES = [
+  'the Unreadable', 'Luck Magnet', 'Two-Pair Mayor', 'The Nervous Shark', 'Queen of Raises',
+];
+
+const pickRandom = (items) => items[Math.floor(Math.random() * items.length)];
+
+const generateFunnyBotUsername = (suffix) => {
+  const first = pickRandom(BOT_FIRST_NAMES);
+  const last = pickRandom(BOT_LAST_NAMES);
+  const nick = pickRandom(BOT_NICKNAMES).replace(/\s+/g, '_');
+  return `BOT_${first}_${last}_${nick}_${suffix}`;
+};
+
+const getBotDisplayName = (username) => {
+  if (!username?.startsWith('BOT_')) return username;
+  const raw = username.replace(/^BOT_/, '');
+  const parts = raw.split('_').filter(Boolean);
+  if (parts.length === 0) return 'Bot';
+  // Drop trailing random suffix token if present.
+  const maybeSuffix = parts[parts.length - 1];
+  const cleaned = /^[A-Za-z0-9]{6,}$/.test(maybeSuffix)
+    ? parts.slice(0, -1)
+    : parts;
+  return cleaned.join(' ');
+};
+
 /**
  * Get all active tables
  */
@@ -187,15 +343,13 @@ const joinTable = asyncHandler(async (req, res) => {
     );
     const seatedCount = countRes.rows[0]?.count || 0;
 
-    await client.query(
-      'UPDATE game_tables SET current_players = $1 WHERE id = $2',
-      [seatedCount, tableId],
-    );
+    await syncTableCounters(client, tableId, seatedCount);
 
     return { position: seatPosition, alreadySeated: false, seatedCount };
   });
 
   resetEngine(tableId);
+  clearNextHandTracking(tableId);
   logger.info('Player joined table', { userId, tableId, position: result.position });
 
   res.json({
@@ -208,7 +362,7 @@ const joinTable = asyncHandler(async (req, res) => {
 
 const insertBotUser = async (client) => {
   const suffix = generateRandomToken(6);
-  const username = `BOT_${suffix}`;
+  const username = generateFunnyBotUsername(suffix);
   const email = `bot+${suffix}@poker.local`;
   const passwordHash = await hashPassword(generateRandomToken(12));
   const result = await client.query(
@@ -287,13 +441,15 @@ const addBots = asyncHandler(async (req, res) => {
     );
     const seatedCount = countRes.rows[0]?.count || 0;
 
-    await client.query(
-      'UPDATE game_tables SET current_players = $1 WHERE id = $2',
-      [seatedCount, tableId],
-    );
+    await syncTableCounters(client, tableId, seatedCount);
 
     return { added: seatsToFill };
   });
+
+  if (result.added > 0) {
+    resetEngine(tableId);
+    clearNextHandTracking(tableId);
+  }
 
   res.json({
     success: true,
@@ -356,12 +512,11 @@ const removeBot = asyncHandler(async (req, res) => {
     );
     const seatedCount = countRes.rows[0]?.count || 0;
 
-    await client.query(
-      'UPDATE game_tables SET current_players = $1 WHERE id = $2',
-      [seatedCount, tableId],
-    );
+    await syncTableCounters(client, tableId, seatedCount);
   });
 
+  resetEngine(tableId);
+  clearNextHandTracking(tableId);
   res.json({
     success: true,
     message: 'Bot removed',
@@ -389,13 +544,11 @@ const leaveTable = asyncHandler(async (req, res) => {
     );
     const seatedCount = countRes.rows[0]?.count || 0;
 
-    await client.query(
-      'UPDATE game_tables SET current_players = $1 WHERE id = $2',
-      [seatedCount, tableId],
-    );
+    await syncTableCounters(client, tableId, seatedCount);
   });
 
   resetEngine(tableId);
+  clearNextHandTracking(tableId);
   logger.info('Player left table', { userId, tableId });
 
   res.json({
@@ -433,43 +586,12 @@ const playerAction = asyncHandler(async (req, res) => {
 
   const engine = await getEngine(tableId);
   const numericAmount = Number(amount) || 0;
-  const result = await engine.processPlayerAction(userId, actionKey, numericAmount);
+  await engine.processPlayerAction(userId, actionKey, numericAmount);
 
-  const botActions = [];
-  if (!engine.isCompleted()) {
-    // Bot responses (after human action only). Only act when it's a bot's turn.
-    const botRows = await db.getAll(
-      `SELECT ts.player_id, u.username
-       FROM table_seats ts
-       JOIN users u ON u.id = ts.player_id
-       WHERE ts.table_id = $1 AND ts.is_seated = true AND u.username LIKE 'BOT_%'
-       ORDER BY ts.position`,
-      [tableId],
-    );
-    const botIds = new Set(botRows.map((row) => row.player_id));
-
-    let guard = 0;
-    let gameState = engine.getGameState();
-    while (!engine.isCompleted() && gameState.currentActorId && botIds.has(gameState.currentActorId)) {
-      if (guard++ > 10) break; // safety guard per request
-      const player = gameState.players.find((p) => p.id === gameState.currentActorId);
-      if (!player || player.folded) {
-        break;
-      }
-      const decision = decideBotAction(gameState, player, engine.stateMachine.bigBlind || 0);
-      try {
-        await engine.processPlayerAction(player.id, decision.action, decision.amount || 0);
-        botActions.push({ playerId: player.id, action: decision.action, amount: decision.amount || 0 });
-        gameState = engine.getGameState();
-      } catch (error) {
-        break;
-      }
-    }
-  }
-
-  if (engine.isCompleted()) {
-    resetEngine(tableId);
-  }
+  const botActions = engine.isCompleted() ? [] : await processBotTurns(engine, tableId);
+  const roundResult = engine.isCompleted() ? engine.getRoundSummary() : null;
+  const humanRows = roundResult ? await getHumanRowsForTable(tableId) : [];
+  const nextHand = buildNextHandStatus(tableId, userId, roundResult, humanRows);
 
   const io = getIO();
   if (io) {
@@ -490,11 +612,14 @@ const playerAction = asyncHandler(async (req, res) => {
       });
     }
   }
+  emitRoundCompleted(io, tableId, roundResult);
 
   res.json({
     success: true,
-    state: engine.getGameState(),
+    state: engine.getGameStateForPlayer(userId),
     botActions,
+    roundResult,
+    nextHand,
   });
 });
 
@@ -503,10 +628,161 @@ const playerAction = asyncHandler(async (req, res) => {
  */
 const getGameState = asyncHandler(async (req, res) => {
   const { tableId } = req.params;
+  const userId = req.user?.sub;
+  const table = await GameTable.findById(tableId);
+  if (!table) {
+    return res.status(404).json({
+      success: false,
+      error: 'Table not found',
+    });
+  }
+
+  if ((table.current_players || 0) < 2) {
+    resetEngine(tableId);
+    clearNextHandTracking(tableId);
+    return res.json({
+      success: true,
+      state: {
+        gameId: null,
+        state: 'WAITING_FOR_PLAYERS',
+        pot: 0,
+        communityCards: [],
+        players: [],
+        activePlayers: 0,
+        currentBet: 0,
+        currentActorId: null,
+        buttonPosition: 0,
+        playerHand: null,
+      },
+    });
+  }
+
   const engine = await getEngine(tableId);
+  const botActions = engine.isCompleted() ? [] : await processBotTurns(engine, tableId);
+  const roundResult = engine.isCompleted() ? engine.getRoundSummary() : null;
+  const humanRows = roundResult ? await getHumanRowsForTable(tableId) : [];
+  const nextHand = buildNextHandStatus(tableId, userId, roundResult, humanRows);
+
+  const io = getIO();
+  if (io && botActions.length > 0) {
+    io.to(`table:${tableId}`).emit('GAME_STATE_UPDATE', {
+      tableId,
+      state: engine.getGameState(),
+    });
+    io.to(`table:${tableId}`).emit('BOT_ACTIONS', {
+      tableId,
+      actions: botActions,
+    });
+  }
+  emitRoundCompleted(io, tableId, roundResult);
+
   res.json({
     success: true,
-    state: engine.getGameState(),
+    state: engine.getGameStateForPlayer(userId),
+    botActions,
+    roundResult,
+    nextHand,
+  });
+});
+
+/**
+ * Confirm player readiness for next hand. Next hand starts when all human players confirm.
+ */
+const confirmNextHand = asyncHandler(async (req, res) => {
+  const { tableId } = req.params;
+  const userId = req.user.sub;
+
+  const table = await GameTable.findById(tableId);
+  if (!table) {
+    return res.status(404).json({
+      success: false,
+      error: 'Table not found',
+    });
+  }
+
+  const seatRow = await db.getOne(
+    `SELECT ts.player_id, ts.position, u.username
+     FROM table_seats ts
+     JOIN users u ON u.id = ts.player_id
+     WHERE ts.table_id = $1 AND ts.player_id = $2 AND ts.is_seated = true`,
+    [tableId, userId],
+  );
+  if (!seatRow) {
+    return res.status(403).json({
+      success: false,
+      error: 'Player is not seated at this table',
+    });
+  }
+  if (seatRow.username?.startsWith('BOT_')) {
+    return res.status(403).json({
+      success: false,
+      error: 'Bots cannot confirm next hand',
+    });
+  }
+
+  const engine = await getEngine(tableId);
+  if (!engine.isCompleted()) {
+    return res.status(400).json({
+      success: false,
+      error: 'Current hand is still in progress',
+    });
+  }
+
+  const roundResult = engine.getRoundSummary();
+  const humanRows = await getHumanRowsForTable(tableId);
+  syncRoundTracking(tableId, roundResult);
+  const confirmedSet = nextHandConfirmations.get(tableId) || new Set();
+  confirmedSet.add(userId);
+  nextHandConfirmations.set(tableId, confirmedSet);
+
+  const nextHand = buildNextHandStatus(tableId, userId, roundResult, humanRows);
+  const io = getIO();
+
+  if (nextHand && nextHand.required > 0 && nextHand.confirmed >= nextHand.required) {
+    clearNextHandTracking(tableId);
+    resetEngine(tableId);
+    const newEngine = await getEngine(tableId);
+    const botActions = await processBotTurns(newEngine, tableId);
+
+    if (io) {
+      io.to(`table:${tableId}`).emit('NEXT_HAND_STARTED', {
+        tableId,
+        state: newEngine.getGameState(),
+      });
+      if (botActions.length > 0) {
+        io.to(`table:${tableId}`).emit('BOT_ACTIONS', {
+          tableId,
+          actions: botActions,
+        });
+      }
+      io.to(`table:${tableId}`).emit('GAME_STATE_UPDATE', {
+        tableId,
+        state: newEngine.getGameState(),
+      });
+    }
+
+    return res.json({
+      success: true,
+      started: true,
+      state: newEngine.getGameStateForPlayer(userId),
+      botActions,
+      roundResult: null,
+      nextHand: null,
+    });
+  }
+
+  if (io) {
+    io.to(`table:${tableId}`).emit('NEXT_HAND_STATUS', {
+      tableId,
+      nextHand,
+    });
+  }
+
+  res.json({
+    success: true,
+    started: false,
+    roundResult,
+    nextHand,
   });
 });
 
@@ -537,12 +813,13 @@ const getSeats = asyncHandler(async (req, res) => {
   const availableSeats = table.max_seats - occupiedCount;
   const seats = Array.from({ length: table.max_seats }).map((_, index) => {
     const row = seatRows.find((seat) => seat.position === index);
+    const isBot = row?.username?.startsWith('BOT_') || false;
     return {
       position: index,
       occupied: !!row,
       playerId: row?.player_id || null,
-      username: row?.username || null,
-      isBot: row?.username?.startsWith('BOT_') || false,
+      username: isBot ? getBotDisplayName(row?.username) : (row?.username || null),
+      isBot,
     };
   });
 
@@ -575,4 +852,5 @@ module.exports = {
   joinTable,
   leaveTable,
   getSeats,
+  confirmNextHand,
 };

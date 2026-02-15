@@ -11,6 +11,7 @@ const {
   joinTable,
   leaveTable,
   getSeats,
+  confirmNextHand,
 } = require('../controllers/tableController');
 const { authenticateToken, optionalAuth } = require('../middleware/authMiddleware');
 
@@ -33,6 +34,8 @@ router.delete('/:tableId/bots', authenticateToken, removeBot);
 router.post('/:tableId/action', authenticateToken, playerAction);
 // Current game state snapshot (requires auth)
 router.get('/:tableId/state', authenticateToken, getGameState);
+// Confirm readiness for next hand (requires auth)
+router.post('/:tableId/next-hand/ready', authenticateToken, confirmNextHand);
 
 // Table details (public)
 router.get('/:tableId', optionalAuth, getTableDetails);

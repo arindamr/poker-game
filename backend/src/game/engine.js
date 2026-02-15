@@ -24,6 +24,7 @@ class PokerEngine {
     this.actionIndex = 0;
     this.actionOrder = [];
     this.completed = false;
+    this.lastHandSummary = null;
   }
 
   /**
@@ -31,6 +32,8 @@ class PokerEngine {
    */
   async startHand() {
     try {
+      this.completed = false;
+      this.lastHandSummary = null;
       this.stateMachine.startHand();
       this.potCalculator.reset();
       this.stateMachine.initializeDeck();
@@ -223,7 +226,7 @@ class PokerEngine {
         const results = [{
           playerId: winner.id,
           position: winner.seat,
-          holeCards: null,
+          holeCards: (this.playerHands[winner.id] || []).join(''),
           bestHand: 'Fold',
           finalStack: winner.stack + this.potCalculator.getPot(),
           winAmount: this.potCalculator.getPot(),
@@ -236,7 +239,7 @@ class PokerEngine {
             results.push({
               playerId: player.id,
               position: player.seat,
-              holeCards: null,
+              holeCards: (this.playerHands[player.id] || []).join(''),
               bestHand: 'Folded',
               finalStack: player.stack,
               winAmount: 0,
@@ -249,7 +252,12 @@ class PokerEngine {
         logger.info('Hand ended - winner by fold', { gameId: this.gameId, winnerId: winner.id });
 
         this.completed = true;
-        return { winners: [winner], results };
+        this.lastHandSummary = {
+          gameId: this.gameId,
+          winners: [{ playerId: winner.id, hand: 'Fold' }],
+          results,
+        };
+        return this.lastHandSummary;
       }
 
       // Showdown - evaluate hands
@@ -323,6 +331,21 @@ class PokerEngine {
         });
       });
 
+      // Include folded/inactive players so end-of-hand reveal can show everyone.
+      this.stateMachine.players.forEach((player) => {
+        if (!results.find((result) => result.playerId === player.id)) {
+          results.push({
+            playerId: player.id,
+            position: player.seat,
+            holeCards: (this.playerHands[player.id] || []).join(''),
+            bestHand: 'Folded',
+            finalStack: player.stack,
+            winAmount: 0,
+            finishPosition: results.length + 1,
+          });
+        }
+      });
+
       await HandHistoryRecorder.recordGameResult(this.gameId, results);
 
       logger.info('Hand ended - showdown', {
@@ -333,7 +356,8 @@ class PokerEngine {
       });
 
       this.completed = true;
-      return {
+      this.lastHandSummary = {
+        gameId: this.gameId,
         winners: winners.map(w => ({
           playerId: w.playerId,
           hand: w.hand,
@@ -341,6 +365,7 @@ class PokerEngine {
         results,
         distribution,
       };
+      return this.lastHandSummary;
     } catch (error) {
       logger.error('Error ending hand', { gameId: this.gameId, error: error.message });
       throw error;
@@ -370,6 +395,17 @@ class PokerEngine {
   }
 
   /**
+   * Get game state with private hand for a specific player
+   */
+  getGameStateForPlayer(playerId) {
+    const baseState = this.getGameState();
+    return {
+      ...baseState,
+      playerHand: playerId ? this.getPlayerHand(playerId) : null,
+    };
+  }
+
+  /**
    * Validate player has valid hole cards
    */
   getPlayerHand(playerId) {
@@ -381,6 +417,35 @@ class PokerEngine {
    */
   isCompleted() {
     return this.completed;
+  }
+
+  /**
+   * Get end-of-hand summary with all players and revealed hole cards.
+   */
+  getRoundSummary() {
+    if (!this.lastHandSummary) {
+      return null;
+    }
+
+    const allPlayers = this.stateMachine.players.map((player) => {
+      const holeCards = this.playerHands[player.id] || [];
+      const result = this.lastHandSummary.results?.find((entry) => entry.playerId === player.id);
+      return {
+        playerId: player.id,
+        seat: player.seat,
+        stack: player.stack,
+        holeCards,
+        winAmount: result?.winAmount || 0,
+        bestHand: result?.bestHand || null,
+        finishPosition: result?.finishPosition || null,
+      };
+    });
+
+    return {
+      ...this.lastHandSummary,
+      players: allPlayers,
+      completedAt: new Date().toISOString(),
+    };
   }
 }
 
