@@ -63,6 +63,12 @@ logs/
 # Docker
 .dockerignore
 
+# Deployment TLS material (must never be committed)
+deployment/aws/ssl/*.pem
+deployment/aws/ssl/*.key
+deployment/aws/ssl/*.crt
+deployment/aws/ssl/*.csr
+
 # Testing
 coverage/
 .nyc_output/
