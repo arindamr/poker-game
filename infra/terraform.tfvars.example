@@ -1,0 +1,35 @@
+aws_region        = "eu-west-2"
+aws_profile       = "default"
+availability_zone = "eu-west-2a"
+
+project_name   = "poker-game"
+instance_name  = "poker-game-server"
+static_ip_name = "poker-game-static-ip"
+bundle_id      = "medium_2_0"
+blueprint_id   = "amazon_linux_2023"
+key_pair_name  = "LightsailDefaultKeyPair"
+
+# Set this if you want Lightsail DNS resources managed by Terraform.
+create_lightsail_dns_zone = false
+domain_name               = ""
+api_subdomain             = "api"
+
+allowed_tcp_ports = [22, 80, 443]
+enable_alarms     = true
+
+repo_clone_url = "https://github.com/arindamr/poker-game.git"
+repo_branch    = "main"
+app_dir        = "/opt/poker-game"
+
+node_env         = "production"
+log_level        = "info"
+seed_demo_user   = false
+install_nginx_service = true
+
+# Include your frontend origin(s)
+cors_origin  = "https://yourdomain.com,https://www.yourdomain.com,https://api.yourdomain.com"
+admin_emails = "admin@yourdomain.com"
+
+db_name     = "poker_game"
+db_user     = "postgres"
+db_password = "change-this-to-a-strong-password-123"

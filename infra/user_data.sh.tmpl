@@ -1,0 +1,124 @@
+#!/bin/bash
+set -euo pipefail
+
+exec > >(tee -a /var/log/poker-bootstrap.log) 2>&1
+
+APP_DIR="${app_dir}"
+REPO_URL="${repo_clone_url}"
+REPO_BRANCH="${repo_branch}"
+STATUS_DIR="/var/lib/poker-bootstrap"
+STATUS_FILE="$STATUS_DIR/status"
+STATUS_JSON="$STATUS_DIR/status.json"
+
+mkdir -p "$STATUS_DIR"
+echo "started" > "$STATUS_FILE"
+cat > "$STATUS_JSON" <<EOF
+{"status":"started","timestamp":"$(date -Iseconds)"}
+EOF
+
+fail() {
+  local msg="$1"
+  echo "[bootstrap] ERROR: $msg"
+  echo "failed" > "$STATUS_FILE"
+  cat > "$STATUS_JSON" <<EOF
+{"status":"failed","timestamp":"$(date -Iseconds)","error":"$msg"}
+EOF
+  exit 1
+}
+
+trap 'fail "Bootstrap failed at line $LINENO"' ERR
+
+echo "[bootstrap] starting at $(date -Iseconds)"
+
+[[ -n "$APP_DIR" ]] || fail "app_dir is empty"
+[[ "$APP_DIR" = /* ]] || fail "app_dir must be an absolute path"
+[[ -n "$REPO_URL" ]] || fail "repo_clone_url is empty"
+[[ -n "$REPO_BRANCH" ]] || fail "repo_branch is empty"
+[[ -n "${db_password}" ]] || fail "db_password is empty"
+[[ -n "${cors_origin}" ]] || fail "cors_origin is empty"
+
+# Base packages
+dnf update -y
+dnf install -y docker git curl
+
+# Docker service
+systemctl enable docker
+systemctl start docker
+
+# Ensure ec2-user can run docker later
+usermod -aG docker ec2-user || true
+
+# Install Docker Compose plugin (preferred) or fallback binary
+if ! docker compose version >/dev/null 2>&1; then
+  mkdir -p /usr/local/lib/docker/cli-plugins
+  curl -fsSL https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-x86_64 \
+    -o /usr/local/lib/docker/cli-plugins/docker-compose
+  chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+fi
+
+# Install/upgrade buildx for modern compose builds
+mkdir -p /usr/local/lib/docker/cli-plugins
+curl -fsSL https://github.com/docker/buildx/releases/download/v0.18.0/buildx-v0.18.0.linux-amd64 \
+  -o /usr/local/lib/docker/cli-plugins/docker-buildx
+chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
+
+# Fetch app source
+mkdir -p "$(dirname "$APP_DIR")"
+if [ ! -d "$APP_DIR/.git" ]; then
+  git clone "$REPO_URL" "$APP_DIR"
+fi
+
+cd "$APP_DIR"
+git fetch --all
+git checkout "$REPO_BRANCH"
+git pull --ff-only origin "$REPO_BRANCH"
+
+DEPLOY_DIR="$APP_DIR/deployment/aws"
+ENV_FILE="$DEPLOY_DIR/.env"
+
+cat > "$ENV_FILE" <<EOF
+# Database
+DB_HOST=poker_postgres
+DB_PORT=5432
+DB_NAME=${db_name}
+DB_USER=${db_user}
+DB_PASSWORD=${db_password}
+
+# Redis
+REDIS_HOST=poker_redis
+REDIS_PORT=6379
+REDIS_PASSWORD=
+
+# JWT
+JWT_SECRET=${jwt_secret}
+JWT_REFRESH_SECRET=${jwt_refresh_secret}
+
+# Application
+NODE_ENV=${node_env}
+LOG_LEVEL=${log_level}
+PORT=3000
+CORS_ORIGIN=${cors_origin}
+SEED_DEMO_USER=${seed_demo_user}
+ADMIN_EMAILS=${admin_emails}
+EOF
+
+chown ec2-user:ec2-user "$ENV_FILE"
+chmod 600 "$ENV_FILE"
+
+cd "$DEPLOY_DIR"
+
+# Start stack
+if [ "${install_nginx}" = "true" ]; then
+  docker compose up -d --build postgres redis backend websocket nginx
+else
+  docker compose up -d --build postgres redis backend websocket
+fi
+
+curl -fsS http://localhost:3000/health >/dev/null || fail "Backend health check failed after bootstrap"
+
+echo "success" > "$STATUS_FILE"
+cat > "$STATUS_JSON" <<EOF
+{"status":"success","timestamp":"$(date -Iseconds)","app_dir":"$APP_DIR","branch":"$REPO_BRANCH"}
+EOF
+
+echo "[bootstrap] completed at $(date -Iseconds)"
