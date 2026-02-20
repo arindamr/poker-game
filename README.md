@@ -23,10 +23,14 @@ A cross-platform multiplayer poker application with enterprise-grade security, b
 | Resource | Purpose |
 |----------|---------|
 | **[QUICK_START.md](QUICK_START.md)** | 3-step setup & testing guide |
-| **[TESTING_PACKAGE_README.md](TESTING_PACKAGE_README.md)** | Complete testing infrastructure overview |
 | **[TESTING_GUIDE.md](TESTING_GUIDE.md)** | Detailed manual testing with curl examples |
+| **[INTEGRATION_TESTING_GUIDE.md](INTEGRATION_TESTING_GUIDE.md)** | End-to-end frontend/backend test scenarios |
 | **[PHASE_5_GUIDE.md](PHASE_5_GUIDE.md)** | Security features & implementation |
-| **[PROJECT_STATUS.md](PROJECT_STATUS.md)** | Current project status |
+| **[docs/API_SCHEMA.md](docs/API_SCHEMA.md)** | REST and WebSocket API reference |
+| **[docs/DATABASE_SCHEMA.md](docs/DATABASE_SCHEMA.md)** | PostgreSQL schema reference |
+| **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** | System architecture overview |
+| **[docs/GAMEPLAY_FLOW.md](docs/GAMEPLAY_FLOW.md)** | Poker state model and game flow |
+| **[docs/CONTRIBUTING.md](docs/CONTRIBUTING.md)** | Contribution guidelines |
 | **[Poker_Game_API.postman_collection.json](Poker_Game_API.postman_collection.json)** | Postman API collection |
 
 ## 🏗️ Project Structure
@@ -63,10 +67,11 @@ poker-game/
 │       └── Dockerfile
 │
 └── docs/                        # Documentation
-    ├── QUICK_START.md
-    ├── TESTING_GUIDE.md
-    ├── PHASE_5_GUIDE.md
-    └── ...
+    ├── API_SCHEMA.md
+    ├── ARCHITECTURE.md
+    ├── CONTRIBUTING.md
+    ├── DATABASE_SCHEMA.md
+    └── GAMEPLAY_FLOW.md
 ```
 
 ## ✨ Features (Phase 5 Complete)
@@ -314,7 +319,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for system design details.
 
 ## Security
 
-See [docs/SECURITY_PLAN.md](docs/SECURITY_PLAN.md) for security implementation.
+See [PHASE_5_GUIDE.md](PHASE_5_GUIDE.md) for security implementation.
 
 ## Contributing
 
