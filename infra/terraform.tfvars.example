@@ -26,8 +26,10 @@ log_level        = "info"
 seed_demo_user   = false
 install_nginx_service = true
 
-# Include your frontend origin(s)
-cors_origin  = "https://yourdomain.com,https://www.yourdomain.com,https://api.yourdomain.com"
+# Include your frontend/browser origin(s).
+# If you deploy and access by static public IP, use:
+# cors_origin = "http://<LIGHTSAIL_STATIC_IP>"
+cors_origin  = "http://<LIGHTSAIL_STATIC_IP>,https://yourdomain.com,https://www.yourdomain.com,https://api.yourdomain.com"
 admin_emails = "admin@yourdomain.com"
 
 db_name     = "poker_game"

@@ -6,7 +6,7 @@ DEPLOY_DIR="$ROOT_DIR/deployment/aws"
 ENV_FILE="$DEPLOY_DIR/.env"
 DEFAULT_BRANCH="${DEPLOY_BRANCH:-main}"
 BRANCH="${1:-$DEFAULT_BRANCH}"
-SERVICES=(postgres redis backend websocket nginx)
+SERVICES=(postgres redis backend websocket frontend nginx)
 
 log() {
   echo "[$(date -Iseconds)] $*"
@@ -64,6 +64,10 @@ cd "$ROOT_DIR"
 git fetch origin
 git checkout "$BRANCH"
 git pull --ff-only origin "$BRANCH"
+if [[ -f "$ROOT_DIR/.gitmodules" ]]; then
+  git submodule sync --recursive
+  git submodule update --init --recursive
+fi
 
 cd "$DEPLOY_DIR"
 log "Rebuilding and restarting services"
@@ -79,6 +83,9 @@ if ! curl -fsS http://localhost:3000/health >/dev/null; then
   echo "Backend health check failed."
   exit 1
 fi
+
+log "Running backend migrations"
+docker exec poker_backend npm run migrate
 
 log "Deployment successful"
 docker compose --env-file "$ENV_FILE" ps

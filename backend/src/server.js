@@ -18,6 +18,7 @@ const securityHeaders = require('./middleware/securityHeaders');
 const enhancedRateLimiter = require('./middleware/enhancedRateLimiter');
 const monitoringService = require('./monitoring/monitoringService');
 const { authenticateToken } = require('./api/middleware/authMiddleware');
+const { isAllowedOrigin } = require('./utils/corsOrigin');
 
 // Routes
 const authRoutes = require('./api/routes/auth');
@@ -44,28 +45,8 @@ app.use(compression());
 // 3. CORS configuration
 app.use(cors({
   origin: (origin, callback) => {
-    // Allow non-browser clients without an Origin header.
-    if (!origin) {
+    if (isAllowedOrigin(origin, config.cors.origin, config.nodeEnv)) {
       return callback(null, true);
-    }
-
-    const normalizedOrigin = origin.toLowerCase();
-    const allowed = new Set((config.cors.origin || []).map((o) => o.toLowerCase()));
-
-    if (allowed.has(normalizedOrigin)) {
-      return callback(null, true);
-    }
-
-    // In development, allow .local hostnames for LAN testing convenience.
-    if (config.nodeEnv === 'development') {
-      try {
-        const parsed = new URL(origin);
-        if (parsed.hostname === 'localhost' || parsed.hostname.endsWith('.local')) {
-          return callback(null, true);
-        }
-      } catch (error) {
-        // Fall through to CORS rejection.
-      }
     }
 
     return callback(new Error('Not allowed by CORS'));

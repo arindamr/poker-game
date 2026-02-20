@@ -32,6 +32,12 @@ Edit `terraform.tfvars` at minimum:
 - `repo_clone_url` (if not using default repo)
 - `domain_name` and `create_lightsail_dns_zone` (if managing DNS here)
 
+If you are running internet traffic directly against the Lightsail static IP (no domain), set:
+
+- `create_lightsail_dns_zone = false`
+- `install_nginx_service = true`
+- `cors_origin = "http://<LIGHTSAIL_STATIC_IP>"`
+
 ## 2) Init / plan / apply
 
 ```bash

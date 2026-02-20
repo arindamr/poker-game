@@ -62,6 +62,13 @@ router.post('/tables', authenticateToken, rateLimiter.middleware({ maxAttempts: 
   try {
     const userId = req.user.id;
     const { blinds, buyIn, maxPlayers } = req.body;
+    const smallBlind = Number(blinds?.small ?? config.game.smallBlind ?? 1);
+    const bigBlind = Number(blinds?.big ?? Math.max(smallBlind * 2, smallBlind + 1));
+    const tableBuyIn = Number(buyIn ?? 0);
+    const seatCount = Number(maxPlayers ?? 6);
+    const minBuyIn = Math.max(tableBuyIn, 1);
+    const maxBuyIn = Math.max(minBuyIn, tableBuyIn * 10 || minBuyIn);
+    const tableName = `Table ${Date.now()}`;
 
     // Check if user is suspended or banned
     const userStatus = await db.query(
@@ -79,16 +86,29 @@ router.post('/tables', authenticateToken, rateLimiter.middleware({ maxAttempts: 
 
     // Verify user has sufficient balance
     const user = await db.query('SELECT account_balance FROM users WHERE id = $1', [userId]);
-    if (user.rows[0].account_balance < buyIn) {
+    if (Number(user.rows[0].account_balance) < tableBuyIn) {
       return res.status(400).json({ error: 'Insufficient balance' });
     }
 
     // Create game table
     const gameResult = await db.query(
-      `INSERT INTO game_tables (creator_id, blinds, buy_in, max_players, status)
-       VALUES ($1, $2, $3, $4, 'waiting')
+      `INSERT INTO game_tables (
+         name,
+         small_blind,
+         big_blind,
+         min_buy_in,
+         max_buy_in,
+         max_seats,
+         created_by,
+         creator_id,
+         blinds,
+         buy_in,
+         max_players,
+         status
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $8, $9, $6, 'waiting')
        RETURNING id, blinds, buy_in, max_players`,
-      [userId, JSON.stringify(blinds), buyIn, maxPlayers]
+      [tableName, smallBlind, bigBlind, minBuyIn, maxBuyIn, seatCount, userId, JSON.stringify(blinds || { small: smallBlind, big: bigBlind }), tableBuyIn]
     );
 
     const gameId = gameResult.rows[0].id;
@@ -96,7 +116,7 @@ router.post('/tables', authenticateToken, rateLimiter.middleware({ maxAttempts: 
     // Add creator as first player
     await db.query(
       'INSERT INTO game_players (game_id, user_id, stack, position) VALUES ($1, $2, $3, $4)',
-      [gameId, userId, buyIn, 0]
+      [gameId, userId, tableBuyIn, 0]
     );
 
     logger.info(`Game table created: ${gameId} by user ${userId}`);
@@ -104,9 +124,9 @@ router.post('/tables', authenticateToken, rateLimiter.middleware({ maxAttempts: 
 
     res.status(201).json({
       gameId,
-      blinds,
-      buyIn,
-      maxPlayers,
+      blinds: blinds || { small: smallBlind, big: bigBlind },
+      buyIn: tableBuyIn,
+      maxPlayers: seatCount,
       status: 'waiting',
     });
   } catch (error) {
@@ -151,7 +171,7 @@ router.post('/tables/:gameId/join', authenticateToken, rateLimiter.middleware({ 
 
     // Check player count
     const playerCount = await db.query('SELECT COUNT(*) FROM game_players WHERE game_id = $1', [gameId]);
-    if (playerCount.rows[0].count >= game.rows[0].max_players) {
+    if (Number(playerCount.rows[0].count) >= Number(game.rows[0].max_players || game.rows[0].max_seats || 0)) {
       return res.status(400).json({ error: 'Game is full' });
     }
 
@@ -180,7 +200,7 @@ router.post('/tables/:gameId/join', authenticateToken, rateLimiter.middleware({ 
     }
 
     // Add player to game
-    const position = playerCount.rows[0].count;
+    const position = Number(playerCount.rows[0].count);
     await db.query(
       'INSERT INTO game_players (game_id, user_id, stack, position) VALUES ($1, $2, $3, $4)',
       [gameId, userId, buyIn, position]

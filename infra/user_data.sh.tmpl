@@ -72,6 +72,10 @@ cd "$APP_DIR"
 git fetch --all
 git checkout "$REPO_BRANCH"
 git pull --ff-only origin "$REPO_BRANCH"
+if [ -f "$APP_DIR/.gitmodules" ]; then
+  git submodule sync --recursive
+  git submodule update --init --recursive
+fi
 
 DEPLOY_DIR="$APP_DIR/deployment/aws"
 ENV_FILE="$DEPLOY_DIR/.env"
@@ -109,10 +113,13 @@ cd "$DEPLOY_DIR"
 
 # Start stack
 if [ "${install_nginx}" = "true" ]; then
-  docker compose up -d --build postgres redis backend websocket nginx
+  docker compose up -d --build postgres redis backend websocket frontend nginx
 else
-  docker compose up -d --build postgres redis backend websocket
+  docker compose up -d --build postgres redis backend websocket frontend
 fi
+
+# Apply DB migrations after services come up.
+docker exec poker_backend npm run migrate
 
 curl -fsS http://localhost:3000/health >/dev/null || fail "Backend health check failed after bootstrap"
 

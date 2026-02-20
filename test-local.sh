@@ -16,6 +16,9 @@ POSTGRES_HOST="localhost"
 POSTGRES_PORT="5432"
 REDIS_HOST="localhost"
 REDIS_PORT="6379"
+TEST_EMAIL="test@example.com"
+TEST_PASSWORD="Demo@123456"
+TEST_USERNAME="demo"
 
 # Colors for output
 GREEN='\033[0;32m'
@@ -32,19 +35,42 @@ print_section() {
     echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 }
 
-# Helper function to check service
-check_service() {
+# Helper function to check HTTP service
+check_http_service() {
     local service=$1
     local port=$2
-    local result=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:$port/health 2>/dev/null || echo "000")
-    
+    local path=${3:-/health}
+    local result
+    result=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:${port}${path}" 2>/dev/null || echo "000")
+
     if [ "$result" = "200" ]; then
         echo -e "${GREEN}✓${NC} $service is running"
         return 0
-    else
-        echo -e "${RED}✗${NC} $service is not responding"
-        return 1
     fi
+
+    echo -e "${RED}✗${NC} $service is not responding"
+    return 1
+}
+
+# Helper function to check if a TCP port is accepting connections
+check_tcp_service() {
+    local service=$1
+    local port=$2
+
+    if command -v nc >/dev/null 2>&1; then
+        if nc -z localhost "$port" >/dev/null 2>&1; then
+            echo -e "${GREEN}✓${NC} $service is accepting TCP connections"
+            return 0
+        fi
+    else
+        if (echo >"/dev/tcp/localhost/$port") >/dev/null 2>&1; then
+            echo -e "${GREEN}✓${NC} $service is accepting TCP connections"
+            return 0
+        fi
+    fi
+
+    echo -e "${RED}✗${NC} $service is not reachable on TCP port $port"
+    return 1
 }
 
 # Test 1: Check Docker Services
@@ -59,10 +85,13 @@ docker-compose up -d
 echo "Waiting for services to be ready..."
 sleep 5
 
+echo "Running backend database migrations..."
+docker exec poker_backend npm run migrate
+
 # Check services
-check_service "Backend API" 3000 || true
-check_service "PostgreSQL" 5432 || true
-check_service "Redis" 6379 || true
+check_http_service "Backend API" 3000 "/health" || true
+check_tcp_service "PostgreSQL" 5432 || true
+check_tcp_service "Redis" 6379 || true
 
 echo -e "${GREEN}✓${NC} All services started"
 
@@ -82,14 +111,14 @@ fi
 # Test 3: Test Metrics Endpoint
 print_section "3. TESTING METRICS ENDPOINT"
 
-echo "Fetching metrics..."
-METRICS=$(curl -s http://localhost:3000/metrics | head -20)
-echo "$METRICS"
+echo "Checking that metrics endpoint requires authentication..."
+METRICS_UNAUTH=$(curl -s http://localhost:3000/metrics)
+echo "$METRICS_UNAUTH"
 
-if echo "$METRICS" | grep -q "TYPE"; then
-    echo -e "${GREEN}✓${NC} Metrics endpoint working"
+if echo "$METRICS_UNAUTH" | grep -q "No authentication token provided"; then
+    echo -e "${GREEN}✓${NC} Metrics endpoint is protected"
 else
-    echo -e "${RED}✗${NC} Metrics endpoint failed"
+    echo -e "${YELLOW}⚠${NC} Metrics endpoint protection check unexpected response"
 fi
 
 # Test 4: Authentication Tests
@@ -100,10 +129,10 @@ echo "Registering test user..."
 REGISTER_RESPONSE=$(curl -s -X POST http://localhost:3000/api/auth/register \
   -H "Content-Type: application/json" \
   -d '{
-    "email": "test@pokergame.com",
-    "password": "TestPass123!",
-    "firstName": "Test",
-    "lastName": "User"
+    "username": "'"$TEST_USERNAME"'",
+    "email": "'"$TEST_EMAIL"'",
+    "password": "'"$TEST_PASSWORD"'",
+    "confirmPassword": "'"$TEST_PASSWORD"'"
   }')
 
 echo "Registration response: $REGISTER_RESPONSE"
@@ -122,8 +151,8 @@ echo "Testing login..."
 LOGIN_RESPONSE=$(curl -s -X POST http://localhost:3000/api/auth/login \
   -H "Content-Type: application/json" \
   -d '{
-    "email": "test@pokergame.com",
-    "password": "TestPass123!"
+    "email": "'"$TEST_EMAIL"'",
+    "password": "'"$TEST_PASSWORD"'"
   }')
 
 echo "Login response: $LOGIN_RESPONSE"
@@ -132,6 +161,18 @@ if echo "$LOGIN_RESPONSE" | grep -q "accessToken"; then
     echo -e "${GREEN}✓${NC} Login successful"
     ACCESS_TOKEN=$(echo "$LOGIN_RESPONSE" | grep -o '"accessToken":"[^"]*' | cut -d'"' -f4)
     echo "Access Token: ${ACCESS_TOKEN:0:20}..."
+
+    echo ""
+    echo "Fetching metrics with authentication..."
+    METRICS=$(curl -s http://localhost:3000/metrics \
+      -H "Authorization: Bearer $ACCESS_TOKEN" | head -20)
+    echo "$METRICS"
+
+    if echo "$METRICS" | grep -q "TYPE"; then
+        echo -e "${GREEN}✓${NC} Metrics endpoint working"
+    else
+        echo -e "${RED}✗${NC} Metrics endpoint failed"
+    fi
 else
     echo -e "${RED}✗${NC} Login failed"
 fi
@@ -144,7 +185,7 @@ if [ -n "$ACCESS_TOKEN" ]; then
     ENABLE_2FA=$(curl -s -X POST http://localhost:3000/api/security/2fa/enable \
       -H "Content-Type: application/json" \
       -H "Authorization: Bearer $ACCESS_TOKEN" \
-      -d '{"email": "test@pokergame.com"}')
+      -d '{"email": "'"$TEST_EMAIL"'"}')
     
     echo "2FA Response: $ENABLE_2FA"
     
