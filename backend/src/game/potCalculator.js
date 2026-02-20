@@ -69,7 +69,7 @@ class PotCalculator {
    */
   calculateRake(potSize, rakePercent = 0.03) {
     const rake = potSize * rakePercent;
-    const maxRake = 5; // Max rake per hand
+    const maxRake = 500; // Max rake per hand
     return Math.min(rake, maxRake);
   }
 
@@ -158,7 +158,7 @@ class PotCalculator {
    * Get player's contribution
    */
   getPlayerContribution(playerId) {
-    return this.playerContributions[playerId] || 0;
+    return this.playerContributions[playerId];
   }
 
   /**

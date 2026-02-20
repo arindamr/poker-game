@@ -7,7 +7,7 @@ const db = require('../config/database');
  */
 class AntiCheatEngine {
   constructor() {
-    this.suspiciousActionThreshold = 0.7; // 70% confidence = suspicious
+    this.suspiciousActionThreshold = 0.5; // 50% confidence = suspicious
     this.confirmedCheatingThreshold = 0.85; // 85% confidence = confirmed
     this.patterns = {
       RTA: 'real_time_action',
