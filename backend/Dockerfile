@@ -9,7 +9,7 @@ RUN apk add --no-cache dumb-init
 COPY package*.json ./
 
 # Install dependencies (production only)
-RUN npm ci --only=production
+RUN if [ -f package-lock.json ]; then npm ci --only=production; else npm install --omit=dev; fi
 
 # Copy application
 COPY . .
