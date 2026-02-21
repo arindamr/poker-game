@@ -32,6 +32,9 @@ const adminRoutes = require('./api/routes/admin');
 const app = express();
 const server = http.createServer(app);
 
+// Trust first reverse proxy (nginx/Lightsail) so req.ip and rate-limit behave correctly.
+app.set('trust proxy', 1);
+
 // ============================================================================
 // PHASE 5: SECURITY MIDDLEWARE STACK
 // ============================================================================
