@@ -34,6 +34,7 @@ type GameState = {
   players?: Array<{ id: string; seat: number; stack: number; folded?: boolean }>;
   activePlayers?: number;
   currentBet?: number;
+  currentActorId?: string | null;
   playerHand?: string[] | null;
 };
 
