@@ -41,7 +41,10 @@ export default function Profile() {
   const loadProfile = async () => {
     try {
       const client = new ApiClient();
-      const response = await client.get('/api/v1/users/profile');
+      const response = await client.get<UserProfile>('/api/v1/users/profile');
+      if (!response.data) {
+        throw new Error('Profile data missing from response');
+      }
       setProfile(response.data);
       setFormData({
         username: response.data.username,
