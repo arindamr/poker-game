@@ -415,7 +415,9 @@ export default function TablePage() {
     });
 
     socket.on('BOT_ACTIONS', (payload) => {
-      const actions = Array.isArray(payload?.actions) ? payload.actions : [];
+      const actions: Array<{ action?: string; amount?: number }> = Array.isArray(payload?.actions)
+        ? payload.actions
+        : [];
       actions.forEach((botAction) => {
         const action = (botAction.action || '').toString().toLowerCase();
         const amount = botAction.amount ? ` ${botAction.amount}` : '';
