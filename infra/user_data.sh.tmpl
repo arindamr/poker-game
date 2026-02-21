@@ -120,7 +120,7 @@ cd "$DEPLOY_DIR"
 mapfile -t COMPOSE_SERVICES < <(docker compose config --services)
 has_service() {
   local name="$1"
-  printf '%s\n' "${COMPOSE_SERVICES[@]}" | grep -qx "$name"
+  printf '%s\n' "$${COMPOSE_SERVICES[@]}" | grep -qx "$name"
 }
 
 SERVICES=(postgres redis backend websocket)
@@ -131,7 +131,7 @@ if [ "${install_nginx}" = "true" ] && has_service nginx; then
   SERVICES+=(nginx)
 fi
 
-docker compose up -d --build "${SERVICES[@]}"
+docker compose up -d --build "$${SERVICES[@]}"
 
 # Apply DB migrations after services come up.
 docker exec poker_backend npm run migrate
