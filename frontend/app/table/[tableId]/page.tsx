@@ -37,6 +37,8 @@ type GameState = {
   playerHand?: string[] | null;
 };
 
+type GamePlayer = NonNullable<GameState['players']>[number];
+
 type ActionLogEntry = {
   id: string;
   message: string;
@@ -241,7 +243,7 @@ export default function TablePage() {
   const userId = typeof window !== 'undefined' ? localStorage.getItem('userId') : null;
 
   const playersBySeat = useMemo(() => {
-    const map = new Map<number, GameState['players'][number]>();
+    const map = new Map<number, GamePlayer>();
     if (gameState?.players) {
       gameState.players.forEach((player) => {
         map.set(player.seat, player);
