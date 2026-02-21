@@ -6,7 +6,6 @@ DEPLOY_DIR="$ROOT_DIR/deployment/aws"
 ENV_FILE="$DEPLOY_DIR/.env"
 DEFAULT_BRANCH="${DEPLOY_BRANCH:-main}"
 BRANCH="${1:-$DEFAULT_BRANCH}"
-SERVICES=(postgres redis backend websocket frontend nginx)
 
 log() {
   echo "[$(date -Iseconds)] $*"
@@ -70,6 +69,20 @@ if [[ -f "$ROOT_DIR/.gitmodules" ]]; then
 fi
 
 cd "$DEPLOY_DIR"
+mapfile -t COMPOSE_SERVICES < <(docker compose --env-file "$ENV_FILE" config --services)
+has_service() {
+  local name="$1"
+  printf '%s\n' "${COMPOSE_SERVICES[@]}" | grep -qx "$name"
+}
+
+SERVICES=(postgres redis backend websocket)
+if has_service frontend; then
+  SERVICES+=(frontend)
+fi
+if has_service nginx; then
+  SERVICES+=(nginx)
+fi
+
 log "Rebuilding and restarting services"
 docker compose --env-file "$ENV_FILE" up -d --build "${SERVICES[@]}"
 

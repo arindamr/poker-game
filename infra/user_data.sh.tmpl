@@ -39,7 +39,12 @@ echo "[bootstrap] starting at $(date -Iseconds)"
 
 # Base packages
 dnf update -y
-dnf install -y docker git curl
+dnf install -y docker git
+
+# Amazon Linux 2023 typically ships curl-minimal; avoid forcing curl package conflicts.
+if ! command -v curl >/dev/null 2>&1; then
+  dnf install -y curl-minimal || dnf install -y curl --allowerasing
+fi
 
 # Docker service
 systemctl enable docker
@@ -111,12 +116,22 @@ chmod 600 "$ENV_FILE"
 
 cd "$DEPLOY_DIR"
 
-# Start stack
-if [ "${install_nginx}" = "true" ]; then
-  docker compose up -d --build postgres redis backend websocket frontend nginx
-else
-  docker compose up -d --build postgres redis backend websocket frontend
+# Start stack (support both legacy compose files and newer ones with frontend service)
+mapfile -t COMPOSE_SERVICES < <(docker compose config --services)
+has_service() {
+  local name="$1"
+  printf '%s\n' "${COMPOSE_SERVICES[@]}" | grep -qx "$name"
+}
+
+SERVICES=(postgres redis backend websocket)
+if has_service frontend; then
+  SERVICES+=(frontend)
 fi
+if [ "${install_nginx}" = "true" ] && has_service nginx; then
+  SERVICES+=(nginx)
+fi
+
+docker compose up -d --build "${SERVICES[@]}"
 
 # Apply DB migrations after services come up.
 docker exec poker_backend npm run migrate
