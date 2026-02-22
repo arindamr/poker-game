@@ -586,7 +586,26 @@ const playerAction = asyncHandler(async (req, res) => {
 
   const engine = await getEngine(tableId);
   const numericAmount = Number(amount) || 0;
-  await engine.processPlayerAction(userId, actionKey, numericAmount);
+  try {
+    await engine.processPlayerAction(userId, actionKey, numericAmount);
+  } catch (error) {
+    const message = error?.message || 'Failed to process action';
+    const gameActionError = /insufficient chips|not player turn|cannot |raise must|unknown action|already folded|player not found/i.test(message);
+    if (gameActionError) {
+      logger.warn('Invalid player action rejected', {
+        tableId,
+        userId,
+        action: actionKey,
+        amount: numericAmount,
+        error: message,
+      });
+      return res.status(400).json({
+        success: false,
+        error: message,
+      });
+    }
+    throw error;
+  }
 
   const botActions = engine.isCompleted() ? [] : await processBotTurns(engine, tableId);
   const roundResult = engine.isCompleted() ? engine.getRoundSummary() : null;
