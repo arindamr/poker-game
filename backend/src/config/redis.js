@@ -75,7 +75,12 @@ const get = async (key) => {
 const set = async (key, value, expiresIn = null) => {
   try {
     if (expiresIn) {
-      await redisClient.setEx(key, expiresIn, value);
+      // ioredis uses setex (lowercase); support both for compatibility.
+      if (typeof redisClient.setEx === 'function') {
+        await redisClient.setEx(key, expiresIn, value);
+      } else {
+        await redisClient.setex(key, expiresIn, value);
+      }
     } else {
       await redisClient.set(key, value);
     }
