@@ -116,6 +116,11 @@ chmod 600 "$ENV_FILE"
 
 cd "$DEPLOY_DIR"
 
+# Ensure services auto-start on every instance reboot.
+if [ -x "$DEPLOY_DIR/install-systemd-service.sh" ]; then
+  "$DEPLOY_DIR/install-systemd-service.sh"
+fi
+
 # Start stack (support both legacy compose files and newer ones with frontend service)
 mapfile -t COMPOSE_SERVICES < <(docker compose config --services)
 has_service() {

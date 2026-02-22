@@ -100,5 +100,11 @@ fi
 log "Running backend migrations"
 docker exec poker_backend npm run migrate
 
+if [[ "${EUID}" -eq 0 ]]; then
+  "$DEPLOY_DIR/install-systemd-service.sh"
+else
+  log "Skipping systemd boot service install (not running as root)"
+fi
+
 log "Deployment successful"
 docker compose --env-file "$ENV_FILE" ps
