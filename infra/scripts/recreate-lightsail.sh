@@ -150,9 +150,9 @@ for _ in $(seq 1 60); do
   sleep 10
 done
 
-log "Setting CORS_ORIGIN to public IP and redeploying app services"
+log "Redeploying app services with configured CORS_ORIGIN"
 ssh "${SSH_OPTS[@]}" "ec2-user@$PUBLIC_IP" \
-  "cd /opt/poker-game && sed -i 's|^CORS_ORIGIN=.*|CORS_ORIGIN=http://$PUBLIC_IP|' deployment/aws/.env && ./deployment/aws/deploy.sh '$BRANCH'"
+  "cd /opt/poker-game && ./deployment/aws/deploy.sh '$BRANCH'"
 
 log "Final remote health checks"
 ssh "${SSH_OPTS[@]}" "ec2-user@$PUBLIC_IP" \
