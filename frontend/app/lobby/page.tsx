@@ -18,6 +18,15 @@ interface GameTable {
   createdBy?: string;
 }
 
+const formatSterling = (value: unknown) => {
+  const numeric = Number(value ?? 0);
+  if (!Number.isFinite(numeric)) return '£0.00';
+  if (Math.abs(numeric) < 1) {
+    return `${Math.round(numeric * 100)}p`;
+  }
+  return `£${numeric.toFixed(2)}`;
+};
+
 export default function Lobby() {
   const router = useRouter();
   const [tables, setTables] = useState<GameTable[]>([]);
@@ -213,7 +222,7 @@ export default function Lobby() {
 
                 <div>
                   <label className="block text-slate-300 text-sm font-medium mb-2">
-                    Buy-in Amount ($)
+                    Buy-in Amount (£)
                   </label>
                   <input
                     type="number"
@@ -227,8 +236,8 @@ export default function Lobby() {
                 </div>
 
                 <div className="grid grid-cols-2 gap-2 text-sm text-slate-400">
-                  <div>Small Blind: ${(newTableBuyin / 20).toFixed(2)}</div>
-                  <div>Big Blind: ${(newTableBuyin / 10).toFixed(2)}</div>
+                  <div>Small Blind: {formatSterling(newTableBuyin / 20)}</div>
+                  <div>Big Blind: {formatSterling(newTableBuyin / 10)}</div>
                 </div>
 
                 <button
@@ -270,13 +279,13 @@ export default function Lobby() {
 
                       <div className="text-center">
                         <p className="text-slate-400 text-sm">Buy-in</p>
-                        <p className="text-emerald-400 font-semibold text-lg">${table.buyin}</p>
+                        <p className="text-emerald-400 font-semibold text-lg">{formatSterling(table.buyin)}</p>
                       </div>
 
                       <div className="text-center">
                         <p className="text-slate-400 text-sm">Blinds</p>
                         <p className="text-slate-300 font-semibold">
-                          ${table.smallBlind}/${table.bigBlind}
+                          {formatSterling(table.smallBlind)}/{formatSterling(table.bigBlind)}
                         </p>
                       </div>
 
