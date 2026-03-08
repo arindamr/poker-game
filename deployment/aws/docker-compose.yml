@@ -17,6 +17,7 @@ services:
   postgres:
     image: postgres:15-alpine
     container_name: poker_postgres
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
@@ -25,7 +26,7 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ../db/migrations:/docker-entrypoint-initdb.d
+      - ../../backend/migrations:/docker-entrypoint-initdb.d
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER}"]
       interval: 10s
@@ -38,6 +39,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: poker_redis
+    restart: unless-stopped
     command: redis-server --appendonly yes
     ports:
       - "6379:6379"
@@ -65,7 +67,7 @@ services:
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
       DB_NAME: ${DB_NAME}
-      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      REDIS_URL: redis://redis:6379
       JWT_SECRET: ${JWT_SECRET}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
       LOG_LEVEL: ${LOG_LEVEL}
@@ -101,7 +103,7 @@ services:
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
       DB_NAME: ${DB_NAME}
-      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      REDIS_URL: redis://redis:6379
       LOG_LEVEL: ${LOG_LEVEL}
       SERVICE_TYPE: websocket
     ports:
