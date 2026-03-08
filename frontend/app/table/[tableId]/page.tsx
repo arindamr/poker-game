@@ -34,6 +34,8 @@ type GameState = {
   players?: Array<{ id: string; seat: number; stack: number; folded?: boolean }>;
   activePlayers?: number;
   currentBet?: number;
+  minRaise?: number;
+  playerBetsThisRound?: Record<string, number>;
   currentActorId?: string | null;
   playerHand?: string[] | null;
 };
@@ -43,7 +45,23 @@ type GamePlayer = NonNullable<GameState['players']>[number];
 type ActionLogEntry = {
   id: string;
   message: string;
+  street?: string;
   timestamp: string;
+};
+
+const STREET_LABELS: Record<string, string> = {
+  PRE_FLOP: 'Pre-Flop',
+  FLOP: 'Flop',
+  TURN: 'Turn',
+  RIVER: 'River',
+  SHOWDOWN: 'Showdown',
+};
+
+type SeatActionBadge = {
+  id: string;
+  label: string;
+  amount?: number;
+  isBot?: boolean;
 };
 
 type RoundResult = {
@@ -217,6 +235,34 @@ const formatCurrency = (value: unknown) => {
   return `£${numeric.toFixed(2)}`;
 };
 
+const formatActionLabel = (rawAction: string) => {
+  const action = rawAction.toUpperCase();
+  if (action === 'ALL_IN') return 'All In';
+  if (action === 'RAISE') return 'Raise';
+  if (action === 'CALL') return 'Call';
+  if (action === 'CHECK') return 'Check';
+  if (action === 'BET') return 'Bet';
+  if (action === 'FOLD') return 'Fold';
+  return action || 'Act';
+};
+
+const getActionBadgeClasses = (rawAction: string) => {
+  const action = rawAction.toUpperCase();
+  if (action === 'FOLD') {
+    return 'bg-rose-600/95 border-rose-300/60 text-white';
+  }
+  if (action === 'CHECK') {
+    return 'bg-slate-700/95 border-slate-300/40 text-slate-100';
+  }
+  if (action === 'CALL') {
+    return 'bg-amber-500/95 border-amber-200/60 text-slate-950';
+  }
+  if (action === 'RAISE' || action === 'BET' || action === 'ALL_IN') {
+    return 'bg-emerald-500/95 border-emerald-200/60 text-slate-950';
+  }
+  return 'bg-cyan-600/95 border-cyan-200/60 text-white';
+};
+
 const getWinnerLabel = (
   winnerId: string,
   seats: SeatInfo | null,
@@ -286,7 +332,27 @@ export default function TablePage() {
   const [confirmingNextHand, setConfirmingNextHand] = useState(false);
   const [actionSubmitting, setActionSubmitting] = useState(false);
   const [raiseAmount, setRaiseAmount] = useState('');
+  const [isDealing, setIsDealing] = useState(false);
+  const [dealToken, setDealToken] = useState(0);
+  const [newCommunityIndices, setNewCommunityIndices] = useState<number[]>([]);
+  const [potDisplay, setPotDisplay] = useState(0);
+  const [potBurstKey, setPotBurstKey] = useState(0);
+  const [seatActionBadges, setSeatActionBadges] = useState<Record<number, SeatActionBadge>>({});
+  const [showWinnerBanner, setShowWinnerBanner] = useState(false);
+  const [winnerBannerText, setWinnerBannerText] = useState('');
+  const [phasePulseKey, setPhasePulseKey] = useState(0);
+  const [actionTimeLeft, setActionTimeLeft] = useState<number | null>(null);
+  const actionTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // When true, the current player just submitted an action and bot actions will be logged
+  // from the REST response — suppress the socket BOT_ACTIONS event to avoid duplicates.
+  const suppressBotSocketLog = useRef(false);
   const socketRef = useRef<Socket | null>(null);
+  const previousGameRef = useRef<{ gameId?: string; communityLen: number; pot: number; state?: string }>({
+    gameId: undefined,
+    communityLen: 0,
+    pot: 0,
+    state: undefined,
+  });
 
   const userId = typeof window !== 'undefined' ? localStorage.getItem('userId') : null;
 
@@ -300,20 +366,176 @@ export default function TablePage() {
     return map;
   }, [gameState]);
 
+  // Players whose cards should be face-up at showdown (went to showdown, didn't fold)
+  const revealedHandByPlayerId = useMemo(() => {
+    const map = new Map<string, string[]>();
+    if (roundResult?.players) {
+      roundResult.players.forEach((p) => {
+        const folded = !p.bestHand || p.bestHand === 'Folded' || p.bestHand === 'Fold';
+        if (!folded && p.holeCards && p.holeCards.length > 0) {
+          map.set(p.playerId, p.holeCards);
+        }
+      });
+    }
+    return map;
+  }, [roundResult]);
+
+  const winnerIds = useMemo(
+    () => new Set((roundResult?.winners || []).map((w) => w.playerId)),
+    [roundResult],
+  );
+
   const currentBet = Number(gameState?.currentBet ?? 0);
-  const canCheck = currentBet === 0;
-  const canCall = currentBet > 0;
+  // How much the current user has already put in this betting round (e.g. blind posted)
+  const myBetThisRound = userId ? Number(gameState?.playerBetsThisRound?.[userId] ?? 0) : 0;
+  // Actual amount still needed to call
+  const amountToCall = Math.max(0, currentBet - myBetThisRound);
+  const canCheck = amountToCall === 0;  // BB option: already matched, can check
+  const canCall = amountToCall > 0;
+  // minRaise from server is the required raise increment; minRaiseTarget is the total raise-to amount
+  const serverMinRaise = Number(gameState?.minRaise ?? table?.bigBlind ?? 0);
+  const minRaiseTarget = currentBet + serverMinRaise;
   const raiseValue = Number(raiseAmount || 0);
-  const invalidRaise = currentBet > 0 ? raiseValue <= currentBet : raiseValue <= 0;
+  const invalidRaise = raiseValue < minRaiseTarget || raiseValue <= 0;
   const isYourTurn = !!(userId && gameState?.currentActorId && userId === gameState.currentActorId);
   const yourSeat = seats?.yourSeat;
   const yourPlayerState = yourSeat !== undefined && yourSeat !== null
     ? playersBySeat.get(yourSeat)
     : null;
-  const minRaiseTarget = Math.max(
-    canCall ? currentBet + (table?.bigBlind ?? 0) : (table?.bigBlind ?? 0),
-    0,
+
+  const getSeatByPlayerId = (playerId: string | null | undefined) => (
+    seats?.seats?.find((seat) => seat.playerId === playerId) || null
   );
+
+  const registerSeatAction = (
+    playerId: string | null | undefined,
+    action: string,
+    amount?: number,
+    isBot?: boolean,
+  ) => {
+    const seat = getSeatByPlayerId(playerId);
+    if (!seat) return;
+    const normalizedAction = action.toUpperCase();
+    setSeatActionBadges((prev) => ({
+      ...prev,
+      [seat.position]: {
+        id: `${Date.now()}-${Math.random()}`,
+        label: normalizedAction,
+        amount: amount && amount > 0 ? amount : undefined,
+        isBot,
+      },
+    }));
+  };
+
+  // Action timer: counts down from 30 s when it's your turn
+  const ACTION_TIMEOUT = 30;
+  useEffect(() => {
+    if (actionTimerRef.current) {
+      clearInterval(actionTimerRef.current);
+      actionTimerRef.current = null;
+    }
+    if (isYourTurn) {
+      setActionTimeLeft(ACTION_TIMEOUT);
+      actionTimerRef.current = setInterval(() => {
+        setActionTimeLeft((prev) => {
+          if (prev === null || prev <= 1) {
+            clearInterval(actionTimerRef.current!);
+            actionTimerRef.current = null;
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    } else {
+      setActionTimeLeft(null);
+    }
+    return () => {
+      if (actionTimerRef.current) clearInterval(actionTimerRef.current);
+    };
+  }, [isYourTurn, gameState?.currentActorId]); // reset whenever actor changes
+
+  useEffect(() => {
+    const nextPot = Number(gameState?.pot ?? 0);
+    const prevPot = previousGameRef.current.pot;
+    const fromValue = Number.isFinite(potDisplay) ? potDisplay : prevPot;
+    const toValue = Number.isFinite(nextPot) ? nextPot : 0;
+    const startTime = performance.now();
+    const duration = 450;
+    let rafId = 0;
+
+    const tick = (ts: number) => {
+      const progress = Math.min((ts - startTime) / duration, 1);
+      const eased = 1 - (1 - progress) ** 3;
+      const current = fromValue + (toValue - fromValue) * eased;
+      setPotDisplay(current);
+      if (progress < 1) {
+        rafId = requestAnimationFrame(tick);
+      }
+    };
+
+    if (toValue !== prevPot) {
+      rafId = requestAnimationFrame(tick);
+      if (toValue > prevPot) {
+        setPotBurstKey(Date.now());
+      }
+    } else {
+      setPotDisplay(toValue);
+    }
+
+    previousGameRef.current.pot = toValue;
+    return () => {
+      if (rafId) cancelAnimationFrame(rafId);
+    };
+  }, [gameState?.pot]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    const currentState = gameState?.state;
+    if (currentState && currentState !== previousGameRef.current.state) {
+      setPhasePulseKey(Date.now());
+    }
+    previousGameRef.current.state = currentState;
+  }, [gameState?.state]);
+
+  useEffect(() => {
+    if (!gameState) return;
+    const prev = previousGameRef.current;
+    const currentGameId = gameState.gameId;
+    const currentCommunityLen = (gameState.communityCards || []).length;
+
+    if (currentGameId && currentGameId !== prev.gameId) {
+      setIsDealing(true);
+      setDealToken(Date.now());
+      setSeatActionBadges({});
+      setShowWinnerBanner(false);
+      setWinnerBannerText('');
+      const dealTimer = setTimeout(() => setIsDealing(false), 2000);
+      previousGameRef.current.gameId = currentGameId;
+      previousGameRef.current.communityLen = currentCommunityLen;
+      return () => clearTimeout(dealTimer);
+    }
+
+    if (currentCommunityLen > prev.communityLen) {
+      const start = prev.communityLen;
+      const added = Array.from({ length: currentCommunityLen - start }).map((_, i) => start + i);
+      setNewCommunityIndices(added);
+      const revealTimer = setTimeout(() => setNewCommunityIndices([]), 1800);
+      previousGameRef.current.communityLen = currentCommunityLen;
+      return () => clearTimeout(revealTimer);
+    }
+    previousGameRef.current.communityLen = currentCommunityLen;
+    return undefined;
+  }, [gameState?.gameId, gameState?.communityCards?.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!roundResult) return;
+    const winnerNames = (roundResult.winners || [])
+      .map((winner) => getWinnerLabel(winner.playerId, seats, seats?.yourSeat))
+      .join(', ');
+    const winAmount = formatCurrency(gameState?.pot ?? 0);
+    const verb = winnerNames === 'You' ? 'win' : 'wins';
+    setWinnerBannerText(`${winnerNames || 'Player'} ${verb} ${winAmount}`);
+    setShowWinnerBanner(true);
+  }, [roundResult, seats, gameState?.pot]);
 
   const fetchTable = async () => {
     const client = new ApiClient();
@@ -358,10 +580,20 @@ export default function TablePage() {
     }
   };
 
-  const appendLog = (message: string, timestamp?: string) => {
+  const appendBotActions = (actions: Array<{ action?: string; amount?: number; street?: string; playerId?: string | null }>) => {
+    actions.forEach((botAction) => {
+      const action = (botAction.action || '').toString().toLowerCase();
+      const amount = Number(botAction.amount) > 0 ? ` ${formatCurrency(botAction.amount)}` : '';
+      registerSeatAction(botAction.playerId || null, botAction.action || '', botAction.amount, true);
+      appendLog(`Bot ${action}${amount}.`, botAction.street);
+    });
+  };
+
+  const appendLog = (message: string, street?: string, timestamp?: string) => {
     const entry: ActionLogEntry = {
       id: `${Date.now()}-${Math.random()}`,
       message,
+      street,
       timestamp: timestamp || new Date().toISOString(),
     };
     setActionLog((prev) => [entry, ...prev].slice(0, 20));
@@ -371,13 +603,25 @@ export default function TablePage() {
     if (!table || actionSubmitting) return;
     setError('');
     setActionSubmitting(true);
+    const amount = action === 'RAISE' ? Number(raiseAmount || 0) : 0;
+    // Log optimistically before the round-trip so bot responses appear above this entry
+    const currentStreet = gameState?.state;
+    appendLog(
+      `You ${action.toLowerCase()}${action === 'RAISE' ? ` to ${formatCurrency(amount)}` : action === 'CALL' ? ` ${formatCurrency(amountToCall)}` : ''}.`,
+      currentStreet,
+    );
+    registerSeatAction(userId, action, amount, false);
+    suppressBotSocketLog.current = true; // bot actions will come via REST response
     try {
-      const amount = action === 'RAISE' ? Number(raiseAmount || 0) : 0;
       const client = new ApiClient();
       const response = await client.post(`/api/v1/tables/${table.id}/action`, {
         action,
         amount,
       });
+      // Log bot actions immediately from the REST response — reliable and in correct order
+      if (Array.isArray(response.botActions) && response.botActions.length > 0) {
+        appendBotActions(response.botActions);
+      }
       if (response.state) {
         setGameState(response.state);
       }
@@ -385,10 +629,10 @@ export default function TablePage() {
         setRoundResult(response.roundResult);
       }
       setNextHandStatus(response.nextHand || null);
-      appendLog(`You ${action.toLowerCase()}${action === 'RAISE' ? ` to ${formatCurrency(amount)}` : ''}.`);
     } catch (err: any) {
       setError(err.message || 'Failed to submit action');
     } finally {
+      suppressBotSocketLog.current = false;
       setActionSubmitting(false);
     }
   };
@@ -425,13 +669,17 @@ export default function TablePage() {
 
     socket.on('connect', () => {
       socket.emit('JOIN_TABLE', { tableId: params.tableId }, () => {});
+      // Re-fetch game state on every (re)connect so a refreshing player is never stuck on stale state
+      fetchGameState();
     });
 
     socket.on('GAME_STATE_UPDATE', (payload) => {
       if (payload?.state) {
         setGameState((prev) => ({
           ...payload.state,
-          playerHand: prev?.playerHand ?? null,
+          // Broadcast state is not player-specific; preserve private fields from last REST response
+          playerHand: payload.state.playerHand ?? prev?.playerHand ?? null,
+          playerBetsThisRound: payload.state.playerBetsThisRound ?? prev?.playerBetsThisRound ?? {},
         }));
       }
     });
@@ -451,27 +699,28 @@ export default function TablePage() {
     socket.on('NEXT_HAND_STARTED', () => {
       setRoundResult(null);
       setNextHandStatus(null);
+      setSeatActionBadges({});
+      setShowWinnerBanner(false);
+      setWinnerBannerText('');
     });
 
     socket.on('PLAYER_ACTION_BROADCAST', (payload) => {
       if (payload?.playerId === userId) {
-        return; // already logged locally when action is submitted
+        return; // already logged optimistically when action is submitted
       }
-      const actor = payload?.playerId === userId ? 'You' : (payload?.username || 'Player');
       const action = (payload?.action || '').toString().toLowerCase();
       const amount = Number(payload?.amount) > 0 ? ` ${formatCurrency(payload.amount)}` : '';
-      appendLog(`${actor} ${action}${amount}.`, payload?.timestamp);
+      registerSeatAction(payload?.playerId, payload?.action || '', payload?.amount, false);
+      appendLog(`Opponent ${action}${amount}.`, payload?.street, payload?.timestamp);
     });
 
     socket.on('BOT_ACTIONS', (payload) => {
-      const actions: Array<{ action?: string; amount?: number }> = Array.isArray(payload?.actions)
+      // Suppressed when the current player just submitted an action — logged from REST response instead
+      if (suppressBotSocketLog.current) return;
+      const actions: Array<{ playerId?: string; action?: string; amount?: number; street?: string }> = Array.isArray(payload?.actions)
         ? payload.actions
         : [];
-      actions.forEach((botAction) => {
-        const action = (botAction.action || '').toString().toLowerCase();
-        const amount = Number(botAction.amount) > 0 ? ` ${formatCurrency(botAction.amount)}` : '';
-        appendLog(`Bot ${action}${amount}.`);
-      });
+      appendBotActions(actions);
     });
 
     socket.on('PLAYER_JOINED', (payload) => {
@@ -560,6 +809,9 @@ export default function TablePage() {
     setError('');
     setConfirmingNextHand(true);
     setActionLog([]);
+    setSeatActionBadges({});
+    setShowWinnerBanner(false);
+    setWinnerBannerText('');
     try {
       const client = new ApiClient();
       const response = await client.post(`/api/v1/tables/${table.id}/next-hand/ready`);
@@ -621,6 +873,14 @@ export default function TablePage() {
 
                 <div className="relative p-3 md:p-6 bg-[radial-gradient(circle_at_20%_0%,rgba(239,68,68,0.18),transparent_35%),radial-gradient(circle_at_80%_100%,rgba(45,212,191,0.12),transparent_35%),linear-gradient(155deg,#0b1118_0%,#141a24_45%,#0a0f15_100%)]">
                   <div className="absolute inset-0 opacity-40 bg-[repeating-linear-gradient(45deg,transparent_0,transparent_12px,rgba(0,0,0,0.22)_12px,rgba(0,0,0,0.22)_24px)]" />
+                  <div key={phasePulseKey} className="absolute inset-0 pointer-events-none animate-phase-fade bg-gradient-to-r from-transparent via-white/10 to-transparent" />
+                  {showWinnerBanner ? (
+                    <div className="absolute left-1/2 top-2 md:top-4 -translate-x-1/2 z-30 pointer-events-none">
+                      <div className="animate-winner-banner rounded-full border border-emerald-300/50 bg-emerald-900/80 px-4 py-2 text-sm md:text-base font-semibold text-emerald-100 shadow-[0_8px_24px_rgba(0,0,0,0.45)]">
+                        {winnerBannerText}
+                      </div>
+                    </div>
+                  ) : null}
                   <div className="relative mx-auto w-full max-w-[1180px] aspect-[16/9] md:aspect-[16/8]">
                     <div className="absolute inset-[4%] rounded-[50%] border-2 border-emerald-100/45 bg-gradient-to-b from-slate-100/10 to-slate-800/50 shadow-[inset_0_0_30px_rgba(255,255,255,0.35),0_20px_45px_rgba(0,0,0,0.7)]" />
                     <div className="absolute inset-[9%] rounded-[49%] border border-emerald-950/70 bg-gradient-to-b from-emerald-600/85 via-emerald-700/90 to-emerald-950/95 shadow-[inset_0_0_24px_rgba(255,255,255,0.25)]" />
@@ -630,7 +890,7 @@ export default function TablePage() {
                   <div className="absolute left-1/2 top-[20%] -translate-x-1/2 text-center">
                     <div className="text-[11px] md:text-sm uppercase tracking-[0.18em] text-emerald-100/80">Total Pot</div>
                     <div className="mt-1 text-xl md:text-3xl font-bold text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.7)]">
-                      {formatCurrency(gameState?.pot ?? 0)}
+                      {formatCurrency(potDisplay)}
                     </div>
                   </div>
 
@@ -640,15 +900,25 @@ export default function TablePage() {
                         <div key={`empty-card-${idx}`} className="w-11 h-16 md:w-16 md:h-24 rounded-lg border border-white/25 bg-white/10 backdrop-blur-[1px]" />
                       ))
                     ) : (
-                      (gameState?.communityCards || []).map((card, index) =>
-                        renderPlayingCard(card, `community-${card}-${index}`, true),
-                      )
+                      (gameState?.communityCards || []).map((card, index) => (
+                        <div
+                          key={`community-anim-${card}-${index}`}
+                          className={newCommunityIndices.includes(index) ? 'animate-community-reveal' : ''}
+                          style={{ animationDelay: `${index * 100}ms` }}
+                        >
+                          {renderPlayingCard(card, `community-${card}-${index}`, true)}
+                        </div>
+                      ))
                     )}
+                  </div>
+
+                  <div key={potBurstKey} className="absolute left-1/2 top-[58%] -translate-x-1/2 pointer-events-none">
+                    <div className="animate-pot-burst w-20 h-20 rounded-full border border-amber-300/50" />
                   </div>
 
                   <div className="absolute left-1/2 top-[60%] -translate-x-1/2 flex items-end gap-1.5">
                     {[['£1', 'bg-sky-700'], ['25p', 'bg-cyan-700'], ['5p', 'bg-emerald-700'], ['1p', 'bg-amber-600']].map(([value, chipClass], idx) => (
-                      <div key={`${value}-${idx}`} className="relative">
+                      <div key={`${value}-${idx}`} className={`relative ${potBurstKey ? 'animate-chip-drop' : ''}`} style={{ animationDelay: `${idx * 80}ms` }}>
                         {Array.from({ length: 4 - (idx % 2) }).map((_, stack) => (
                           <div
                             key={`${value}-${idx}-stack-${stack}`}
@@ -669,19 +939,45 @@ export default function TablePage() {
                     const isYou = seats?.yourSeat === index;
                     const playerState = playersBySeat.get(index);
                     const isActing = gameState?.currentActorId && playerState?.id === gameState.currentActorId;
+                    const badge = seatActionBadges[index];
                     const seatPos = getSeatPosition(index, table.maxSeats);
                     const seatLabel = occupied
                       ? (isYou ? 'You' : (seatInfo?.username || `Player ${index + 1}`))
                       : `Seat ${index + 1}`;
+                    const dealFromX = `${50 - seatPos.x}%`;
+                    const dealFromY = `${58 - seatPos.y}%`;
+                    // Badge direction: always point toward the table center.
+                    // Check vertical zone first (top/bottom), then horizontal (left/right).
+                    const badgeAnchorClass = seatPos.y < 35
+                      ? 'left-1/2 -translate-x-1/2 top-full mt-1'          // top seats  → below
+                      : seatPos.y > 65
+                        ? 'left-1/2 -translate-x-1/2 -translate-y-full -top-2' // bottom seats → above
+                        : seatPos.x > 62
+                          ? 'left-0 -translate-x-[105%] -translate-y-1/2 top-1/2'  // right seats → left
+                          : 'right-0 translate-x-[105%] -translate-y-1/2 top-1/2'; // left seats  → right
                     return (
                       <div
                         key={`ring-seat-${index}`}
                         className="absolute -translate-x-1/2 -translate-y-1/2 w-[140px] md:w-[190px]"
                         style={{ left: `${seatPos.x}%`, top: `${seatPos.y}%` }}
                       >
+                        {badge ? (
+                          <div className={`absolute ${badgeAnchorClass} animate-action-badge whitespace-nowrap z-20`}>
+                            <span className={`rounded-full px-3 py-1.5 text-[10px] md:text-xs font-semibold border shadow-[0_6px_18px_rgba(0,0,0,0.4)] ${getActionBadgeClasses(badge.label)}`}>
+                              {formatActionLabel(badge.label)}
+                              {badge.amount ? ` ${formatCurrency(badge.amount)}` : ''}
+                            </span>
+                          </div>
+                        ) : null}
                         <div className={`rounded-full border px-2.5 py-2 md:px-3.5 md:py-3 backdrop-blur-md ${
                           occupied ? 'border-white/20 bg-slate-900/60 text-slate-100' : 'border-slate-500/50 bg-slate-900/35 text-slate-400'
-                        } ${isActing ? 'ring-2 ring-amber-300/60' : ''}`}>
+                        } ${
+                          isActing
+                            ? seatInfo?.isBot
+                              ? 'ring-2 ring-amber-300/70 animate-turn-pulse-bot'
+                              : 'ring-2 ring-cyan-300/70 animate-turn-pulse-human'
+                            : ''
+                        }`}>
                           <div className="flex items-center gap-2">
                             <div className={`w-9 h-9 md:w-11 md:h-11 rounded-full border-2 ${
                               isYou ? 'border-emerald-300 bg-emerald-300/25' : 'border-slate-200/30 bg-slate-300/20'
@@ -699,18 +995,78 @@ export default function TablePage() {
                             {seatInfo?.isBot ? <span className="text-emerald-300">Bot</span> : null}
                           </div>
                         </div>
-                        {isYou && (gameState?.playerHand || []).length > 0 ? (
-                          <div className="mt-2 flex justify-center gap-2">
-                            {(gameState?.playerHand || []).map((card, cardIndex) =>
-                              renderPlayingCard(card, `hero-${card}-${cardIndex}`, true),
-                            )}
-                          </div>
-                        ) : occupied && !isYou && gameState?.state && gameState.state !== 'waiting' ? (
-                          <div className="mt-2 flex justify-center gap-2">
-                            {renderCardBack(`back-${index}-1`, true)}
-                            {renderCardBack(`back-${index}-2`, true)}
-                          </div>
-                        ) : null}
+                        {(() => {
+                          const revealedCards = playerState?.id
+                            ? revealedHandByPlayerId.get(playerState.id)
+                            : null;
+                          const isWinner = !!(playerState?.id && winnerIds.has(playerState.id));
+
+                          // Your cards (face-up)
+                          if (isYou) {
+                            const cards = (gameState?.playerHand || []).length > 0
+                              ? (gameState?.playerHand || [])
+                              : (revealedCards || []);
+                            if (cards.length === 0) return null;
+                            return (
+                              <div className={`mt-2 flex justify-center gap-2 ${isWinner ? 'drop-shadow-[0_0_8px_rgba(251,191,36,0.9)]' : ''}`}>
+                                {cards.map((card, cardIndex) => (
+                                  <div
+                                    key={`hero-wrap-${card}-${cardIndex}-${dealToken}`}
+                                    className={isDealing ? 'animate-deal-player-card' : ''}
+                                    style={{
+                                      animationDelay: `${index * 70 + cardIndex * 120}ms`,
+                                      ['--deal-from-x' as string]: dealFromX,
+                                      ['--deal-from-y' as string]: dealFromY,
+                                    }}
+                                  >
+                                    {renderPlayingCard(card, `hero-${card}-${cardIndex}`, true)}
+                                  </div>
+                                ))}
+                              </div>
+                            );
+                          }
+
+                          // Other occupied seats during an active game
+                          if (!occupied || !gameState?.state || gameState.state === 'waiting') {
+                            return null;
+                          }
+
+                          // Showdown reveal — flip face-up for non-folded players
+                          if (revealedCards && revealedCards.length > 0) {
+                            return (
+                              <div className={`mt-2 flex justify-center gap-2 ${isWinner ? 'drop-shadow-[0_0_8px_rgba(251,191,36,0.9)]' : ''}`}>
+                                {revealedCards.map((card, cardIndex) => (
+                                  <div
+                                    key={`reveal-seat-${index}-${card}-${cardIndex}`}
+                                    className="animate-community-reveal"
+                                    style={{ animationDelay: `${cardIndex * 150}ms` }}
+                                  >
+                                    {renderPlayingCard(card, `reveal-${playerState?.id}-${card}-${cardIndex}`, true)}
+                                  </div>
+                                ))}
+                              </div>
+                            );
+                          }
+
+                          // Card backs during active play
+                          return (
+                            <div className="mt-2 flex justify-center gap-2">
+                              {[1, 2].map((num, cardIndex) => (
+                                <div
+                                  key={`back-wrap-${index}-${num}-${dealToken}`}
+                                  className={isDealing ? 'animate-deal-player-card' : ''}
+                                  style={{
+                                    animationDelay: `${index * 70 + cardIndex * 120}ms`,
+                                    ['--deal-from-x' as string]: dealFromX,
+                                    ['--deal-from-y' as string]: dealFromY,
+                                  }}
+                                >
+                                  {renderCardBack(`back-${index}-${num}`, true)}
+                                </div>
+                              ))}
+                            </div>
+                          );
+                        })()}
                       </div>
                     );
                   })}
@@ -729,8 +1085,13 @@ export default function TablePage() {
                   ) : (
                     actionLog.slice(0, 12).map((entry) => (
                       <div key={entry.id} className="flex justify-between gap-2">
-                        <span>{entry.message}</span>
-                        <span className="text-slate-600">{new Date(entry.timestamp).toLocaleTimeString()}</span>
+                        <span>
+                          {entry.message}
+                          {entry.street && STREET_LABELS[entry.street] ? (
+                            <span className="ml-1 text-slate-500">({STREET_LABELS[entry.street]})</span>
+                          ) : null}
+                        </span>
+                        <span className="text-slate-600 shrink-0">{new Date(entry.timestamp).toLocaleTimeString()}</span>
                       </div>
                     ))
                   )}
@@ -744,14 +1105,21 @@ export default function TablePage() {
                   <div className="mb-3 grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
                     <div className={`rounded-lg px-3 py-2 border ${isYourTurn ? 'border-emerald-400/60 bg-emerald-900/30 text-emerald-200' : 'border-slate-600 bg-slate-800/70 text-slate-300'}`}>
                       <div className="text-[10px] uppercase tracking-wide text-slate-400">Turn</div>
-                      <div className="font-semibold mt-0.5">{isYourTurn ? 'Your move' : 'Waiting'}</div>
+                      <div className="font-semibold mt-0.5 flex items-center gap-2">
+                        {isYourTurn ? 'Your move' : 'Waiting'}
+                        {isYourTurn && actionTimeLeft !== null ? (
+                          <span className={`text-xs font-bold tabular-nums ${actionTimeLeft <= 10 ? 'text-rose-400' : 'text-amber-300'}`}>
+                            {actionTimeLeft}s
+                          </span>
+                        ) : null}
+                      </div>
                     </div>
                     <div className="rounded-lg px-3 py-2 border border-slate-600 bg-slate-800/70 text-slate-200">
                       <div className="text-[10px] uppercase tracking-wide text-slate-400">Current Bet</div>
                       <div className="font-semibold mt-0.5">{formatCurrency(currentBet)}</div>
                     </div>
                     <div className="rounded-lg px-3 py-2 border border-slate-600 bg-slate-800/70 text-slate-200">
-                      <div className="text-[10px] uppercase tracking-wide text-slate-400">Min Raise To</div>
+                      <div className="text-[10px] uppercase tracking-wide text-slate-400">Min Raise</div>
                       <div className="font-semibold mt-0.5">{formatCurrency(minRaiseTarget)}</div>
                     </div>
                     <div className="rounded-lg px-3 py-2 border border-slate-600 bg-slate-800/70 text-slate-200">
@@ -773,7 +1141,7 @@ export default function TablePage() {
                       disabled={!isSeated || actionSubmitting || !canCall || !isYourTurn}
                       className="px-3 py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 text-white rounded-md text-sm font-medium"
                     >
-                      Call {canCall ? formatCurrency(currentBet) : ''}
+                      Call {canCall ? formatCurrency(amountToCall) : ''}
                     </button>
                     <button
                       onClick={() => handlePlayerAction('FOLD')}
@@ -811,8 +1179,8 @@ export default function TablePage() {
                     {!isSeated ? 'Take a seat to act.' : null}
                     {isSeated && !isYourTurn ? ' Waiting for your turn.' : null}
                     {isSeated && isYourTurn && canCheck ? ' No active bet. Check or raise.' : null}
-                    {isSeated && isYourTurn && canCall ? ` Calling requires ${formatCurrency(currentBet)}.` : null}
-                    {isSeated && isYourTurn && invalidRaise ? ' Raise must exceed the current bet.' : null}
+                    {isSeated && isYourTurn && canCall ? ` Calling requires ${formatCurrency(amountToCall)}.` : null}
+                    {isSeated && isYourTurn && invalidRaise ? ` Minimum raise is ${formatCurrency(minRaiseTarget)}.` : null}
                   </div>
                 </div>
 
@@ -969,6 +1337,130 @@ export default function TablePage() {
           </div>
         ) : null}
       </main>
+      <style jsx global>{`
+        .animate-deal-player-card {
+          animation: dealToSeat 460ms cubic-bezier(0.2, 0.9, 0.2, 1) both;
+          transform-origin: center;
+        }
+        .animate-community-reveal {
+          animation: communityReveal 460ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+          transform-style: preserve-3d;
+        }
+        .animate-chip-drop {
+          animation: chipDrop 380ms ease-out both;
+        }
+        .animate-pot-burst {
+          animation: potBurst 600ms ease-out both;
+        }
+        .animate-action-badge {
+          animation: actionBadgePop 260ms ease-out both;
+        }
+        .animate-turn-pulse-human {
+          animation: turnPulseHuman 1.35s ease-in-out infinite;
+        }
+        .animate-turn-pulse-bot {
+          animation: turnPulseBot 1.35s ease-in-out infinite;
+        }
+        .animate-winner-banner {
+          animation: winnerBannerIn 420ms cubic-bezier(0.2, 0.9, 0.2, 1) both;
+        }
+        .animate-phase-fade {
+          animation: phaseFade 520ms ease-out both;
+        }
+
+        @keyframes dealToSeat {
+          0% {
+            opacity: 0;
+            transform: translate(var(--deal-from-x, 0), var(--deal-from-y, 0)) rotate(-22deg) scale(0.78);
+          }
+          70% {
+            opacity: 1;
+            transform: translate(calc(var(--deal-from-x, 0) * 0.1), calc(var(--deal-from-y, 0) * 0.1)) rotate(4deg) scale(1.04);
+          }
+          100% {
+            opacity: 1;
+            transform: translate(0, 0) rotate(0deg) scale(1);
+          }
+        }
+        @keyframes communityReveal {
+          0% {
+            opacity: 0;
+            transform: translateY(-14px) rotateY(180deg) scale(0.9);
+          }
+          60% {
+            opacity: 1;
+            transform: translateY(0) rotateY(20deg) scale(1.02);
+          }
+          100% {
+            opacity: 1;
+            transform: translateY(0) rotateY(0deg) scale(1);
+          }
+        }
+        @keyframes chipDrop {
+          0% {
+            opacity: 0;
+            transform: translateY(-12px) scale(0.9);
+          }
+          100% {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+          }
+        }
+        @keyframes potBurst {
+          0% {
+            opacity: 0.65;
+            transform: scale(0.35);
+          }
+          100% {
+            opacity: 0;
+            transform: scale(1.35);
+          }
+        }
+        @keyframes actionBadgePop {
+          0% {
+            opacity: 0;
+            transform: translate(-50%, -6px) scale(0.84);
+          }
+          100% {
+            opacity: 1;
+            transform: translate(-50%, 0) scale(1);
+          }
+        }
+        @keyframes turnPulseHuman {
+          0%, 100% {
+            box-shadow: 0 0 0 0 rgba(34, 211, 238, 0.55);
+          }
+          50% {
+            box-shadow: 0 0 0 8px rgba(34, 211, 238, 0.1);
+          }
+        }
+        @keyframes turnPulseBot {
+          0%, 100% {
+            box-shadow: 0 0 0 0 rgba(251, 191, 36, 0.55);
+          }
+          50% {
+            box-shadow: 0 0 0 8px rgba(251, 191, 36, 0.1);
+          }
+        }
+        @keyframes winnerBannerIn {
+          0% {
+            opacity: 0;
+            transform: translate(-50%, -16px) scale(0.95);
+          }
+          100% {
+            opacity: 1;
+            transform: translate(-50%, 0) scale(1);
+          }
+        }
+        @keyframes phaseFade {
+          0% {
+            opacity: 0.25;
+          }
+          100% {
+            opacity: 0;
+          }
+        }
+      `}</style>
     </div>
   );
 }

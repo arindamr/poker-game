@@ -96,7 +96,7 @@ const processBotTurns = async (engine, tableId) => {
   let gameState = engine.getGameState();
 
   while (!engine.isCompleted() && gameState.currentActorId && botIds.has(gameState.currentActorId)) {
-    if (guard++ > 15) break; // safety guard
+    if (guard++ > 60) break; // safety guard (6 bots × multiple raises × 4 streets)
 
     const player = gameState.players.find((p) => p.id === gameState.currentActorId);
     if (!player || player.folded) {
@@ -104,12 +104,14 @@ const processBotTurns = async (engine, tableId) => {
     }
 
     const decision = decideBotAction(gameState, player, engine.stateMachine.bigBlind || 0);
+    const streetBeforeBotAction = gameState.state;
     try {
       await engine.processPlayerAction(player.id, decision.action, decision.amount || 0);
       botActions.push({
         playerId: player.id,
         action: decision.action,
         amount: decision.amount || 0,
+        street: streetBeforeBotAction,
       });
       gameState = engine.getGameState();
     } catch (error) {
@@ -586,6 +588,7 @@ const playerAction = asyncHandler(async (req, res) => {
 
   const engine = await getEngine(tableId);
   const numericAmount = Number(amount) || 0;
+  const streetBeforeAction = engine.stateMachine.state;
   try {
     await engine.processPlayerAction(userId, actionKey, numericAmount);
   } catch (error) {
@@ -622,6 +625,7 @@ const playerAction = asyncHandler(async (req, res) => {
       playerId: userId,
       action: actionKey,
       amount: numericAmount,
+      street: streetBeforeAction,
       timestamp: new Date().toISOString(),
     });
     if (botActions.length > 0) {

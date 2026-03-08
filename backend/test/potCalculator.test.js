@@ -9,9 +9,9 @@ describe('PotCalculator side pots', () => {
 
     const sidePots = pot.calculateSidePots();
     expect(sidePots).toEqual([
-      { size: 150, contributors: ['B', 'A', 'C'], minContribution: 50 },
-      { size: 100, contributors: ['A', 'C'], minContribution: 100 },
-      { size: 100, contributors: ['C'], minContribution: 200 },
+      { size: 150, contributors: ['B', 'A', 'C'], eligibleWinners: ['B', 'A', 'C'], minContribution: 50 },
+      { size: 100, contributors: ['A', 'C'], eligibleWinners: ['A', 'C'], minContribution: 100 },
+      { size: 100, contributors: ['C'], eligibleWinners: ['C'], minContribution: 200 },
     ]);
   });
 
@@ -21,7 +21,7 @@ describe('PotCalculator side pots', () => {
     pot.addBet('B', 50);
     pot.addBet('C', 200);
 
-    const sidePots = pot.calculateSidePots();
+    const sidePots = pot.calculateSidePots(new Set()); // no folded players
     const handEvaluations = {
       A: { value: 5 },
       B: { value: 7 },

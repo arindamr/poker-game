@@ -28,13 +28,13 @@ class PotCalculator {
    * Calculate pots when player goes all-in with fewer chips
    * Creates side pots for proper distribution
    */
-  calculateSidePots(playerStacks) {
+  /**
+   * @param {Set<string>} foldedPlayerIds - players who folded and cannot win any pot
+   */
+  calculateSidePots(foldedPlayerIds = new Set()) {
+    // All contributors sorted by total contribution (ascending)
     const contributions = Object.entries(this.playerContributions)
-      .map(([playerId, amount]) => ({
-        playerId,
-        amount,
-        stack: playerStacks?.[playerId] || 0,
-      }))
+      .map(([playerId, amount]) => ({ playerId, amount }))
       .sort((a, b) => a.amount - b.amount);
 
     const pots = [];
@@ -42,19 +42,23 @@ class PotCalculator {
 
     for (let i = 0; i < contributions.length; i++) {
       const contrib = contributions[i];
-      if (contrib.amount > previousAmount) {
-        const potSize = contrib.amount - previousAmount;
-        const eligible = contributions.slice(i).map((c) => c.playerId);
-        const potAmount = potSize * eligible.length;
+      if (contrib.amount <= previousAmount) continue;
 
-        pots.push({
-          size: potAmount,
-          contributors: eligible,
-          minContribution: contrib.amount,
-        });
+      const levelSize = contrib.amount - previousAmount;
+      // All players who contributed at least this level (determines pot size)
+      const allAtLevel = contributions.slice(i).map((c) => c.playerId);
+      const potAmount = levelSize * allAtLevel.length;
+      // Only non-folded players are eligible to win this sub-pot
+      const eligibleWinners = allAtLevel.filter((id) => !foldedPlayerIds.has(id));
 
-        previousAmount = contrib.amount;
-      }
+      pots.push({
+        size: potAmount,
+        contributors: allAtLevel,
+        eligibleWinners,
+        minContribution: contrib.amount,
+      });
+
+      previousAmount = contrib.amount;
     }
 
     this.sidePots = pots;
@@ -97,7 +101,9 @@ class PotCalculator {
           potSize = Math.max(0, pot.size - rake);
         }
 
-        const eligiblePlayers = pot.contributors.filter((playerId) => handEvaluations[playerId]);
+        // Use explicit eligibleWinners (non-folded) if available, else fall back to hand filter
+        const eligiblePlayers = (pot.eligibleWinners || pot.contributors)
+          .filter((playerId) => handEvaluations[playerId]);
         if (eligiblePlayers.length === 0 || potSize === 0) {
           return;
         }

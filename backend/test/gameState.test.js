@@ -11,6 +11,7 @@ describe('GameStateMachine dealing order', () => {
     const deck = Array.from({ length: 52 }, (_, i) => `c${i}`);
     gsm.deck = deck;
 
+    gsm.dealHoleCards(); // sets deckIndex = 4 (2 players × 2 cards)
     gsm.dealFlop();
     gsm.dealTurn();
     gsm.dealRiver();

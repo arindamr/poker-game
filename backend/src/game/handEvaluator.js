@@ -105,6 +105,7 @@ class HandEvaluator {
     const rankCounts = this.getRankCounts(cards);
     const counts = Object.values(rankCounts).sort((a, b) => b - a);
 
+    // Each hand tier is 1,000,000 apart so flush encoding (up to ~154k) fits within its tier.
     // Royal Flush (10-J-Q-K-A, same suit)
     if (isFlushHand && isStraightHand) {
       const ranks = cards.map(c => this.getRankValue(c)).sort((a, b) => b - a);
@@ -112,7 +113,7 @@ class HandEvaluator {
         return {
           rank: 10,
           name: 'Royal Flush',
-          value: 1000000,
+          value: 10000000,
           kickers: [],
         };
       }
@@ -121,7 +122,7 @@ class HandEvaluator {
       return {
         rank: 9,
         name: 'Straight Flush',
-        value: 900000 + ranks[0],
+        value: 9000000 + ranks[0],
         kickers: ranks,
       };
     }
@@ -135,7 +136,7 @@ class HandEvaluator {
       return {
         rank: 8,
         name: 'Four of a Kind',
-        value: 800000 + fourValue * 100 + kickerValue,
+        value: 8000000 + fourValue * 100 + kickerValue,
         kickers: [fourRank, fourRank, fourRank, fourRank, kicker],
       };
     }
@@ -149,18 +150,18 @@ class HandEvaluator {
       return {
         rank: 7,
         name: 'Full House',
-        value: 700000 + threeValue * 100 + pairValue,
+        value: 7000000 + threeValue * 100 + pairValue,
         kickers: [threeRank, threeRank, threeRank, pairRank, pairRank],
       };
     }
 
-    // Flush
+    // Flush — max encoding: 14*10000+13*1000+12*100+11*10+9 = 154,319 (fits within 1M tier gap)
     if (isFlushHand) {
       const ranks = cards.map(c => this.getRankValue(c)).sort((a, b) => b - a);
       return {
         rank: 6,
         name: 'Flush',
-        value: 600000 + ranks[0] * 10000 + ranks[1] * 1000 + ranks[2] * 100 + ranks[3] * 10 + ranks[4],
+        value: 6000000 + ranks[0] * 10000 + ranks[1] * 1000 + ranks[2] * 100 + ranks[3] * 10 + ranks[4],
         kickers: ranks,
       };
     }
@@ -172,7 +173,7 @@ class HandEvaluator {
       return {
         rank: 5,
         name: 'Straight',
-        value: 500000 + highCard,
+        value: 5000000 + highCard,
         kickers: this.isAceLowStraight(cards) ? [5, 4, 3, 2, 1] : ranks,
       };
     }
@@ -188,24 +189,24 @@ class HandEvaluator {
       return {
         rank: 4,
         name: 'Three of a Kind',
-        value: 400000 + threeValue * 1000 + kickers[0] * 100 + kickers[1],
+        value: 4000000 + threeValue * 1000 + kickers[0] * 100 + kickers[1],
         kickers: [threeRank, threeRank, threeRank, ...Object.keys(rankCounts).filter(r => rankCounts[r] === 1)],
       };
     }
 
-    // Two Pair
+    // Two Pair — kicker is always a numeric value for consistent comparison
     if (counts[0] === 2 && counts[1] === 2) {
       const pairs = Object.keys(rankCounts)
         .filter(r => rankCounts[r] === 2)
         .map(r => this.getRankValue(r + 'x'))
         .sort((a, b) => b - a);
-      const kicker = Object.keys(rankCounts).find(r => rankCounts[r] === 1);
-      const kickerValue = this.getRankValue(kicker + 'x');
+      const kickerRank = Object.keys(rankCounts).find(r => rankCounts[r] === 1);
+      const kickerValue = this.getRankValue(kickerRank + 'x');
       return {
         rank: 3,
         name: 'Two Pair',
-        value: 300000 + pairs[0] * 1000 + pairs[1] * 100 + kickerValue,
-        kickers: [...Object.keys(rankCounts).filter(r => rankCounts[r] === 2).sort(), kicker],
+        value: 3000000 + pairs[0] * 1000 + pairs[1] * 100 + kickerValue,
+        kickers: [pairs[0], pairs[1], kickerValue],
       };
     }
 
@@ -220,8 +221,8 @@ class HandEvaluator {
       return {
         rank: 2,
         name: 'One Pair',
-        value: 200000 + pairValue * 1000 + kickers[0] * 100 + kickers[1] * 10 + kickers[2],
-        kickers: [pairRank, pairRank, ...Object.keys(rankCounts).filter(r => rankCounts[r] === 1)],
+        value: 2000000 + pairValue * 1000 + kickers[0] * 100 + kickers[1] * 10 + kickers[2],
+        kickers: [pairValue, ...kickers],
       };
     }
 
@@ -230,7 +231,7 @@ class HandEvaluator {
     return {
       rank: 1,
       name: 'High Card',
-      value: 100000 + ranks[0] * 10000 + ranks[1] * 1000 + ranks[2] * 100 + ranks[3] * 10 + ranks[4],
+      value: 1000000 + ranks[0] * 10000 + ranks[1] * 1000 + ranks[2] * 100 + ranks[3] * 10 + ranks[4],
       kickers: ranks,
     };
   }

@@ -101,19 +101,14 @@ class PokerEngine {
       const numericAmount = Number(amount) || 0;
       const actingPlayer = this.stateMachine.players.find((p) => p.id === playerId);
       const preStack = actingPlayer ? actingPlayer.stack : 0;
-      const preCurrentBet = this.stateMachine.currentBet || 0;
-      let effectiveAmount = numericAmount;
-
-      if (action === ACTION.CALL && effectiveAmount === 0) {
-        effectiveAmount = Math.min(preCurrentBet, preStack);
-      }
-
-      if (action === ACTION.ALL_IN && effectiveAmount === 0) {
-        effectiveAmount = preStack;
-      }
-
-      // Validate action
       const actionOrder = this.actionIndex++;
+
+      // Process in state machine (modifies player.stack in place)
+      this.stateMachine.processAction(playerId, action, numericAmount);
+
+      // Net contribution = chips actually moved from player to pot
+      const postStack = actingPlayer ? actingPlayer.stack : 0;
+      const netContribution = preStack - postStack;
 
       // Record action in database
       await HandHistoryRecorder.recordAction(
@@ -121,25 +116,20 @@ class PokerEngine {
         actionOrder,
         playerId,
         action,
-        effectiveAmount,
+        netContribution,
         this.stateMachine.state,
       );
 
-      // Process in state machine
-      this.stateMachine.processAction(playerId, action, numericAmount);
-
-      // Update pot
-      if (action === ACTION.CALL || action === ACTION.RAISE || action === ACTION.ALL_IN) {
-        if (effectiveAmount > 0) {
-          this.potCalculator.addBet(playerId, effectiveAmount);
-        }
+      // Update pot tracker with net new money
+      if (netContribution > 0) {
+        this.potCalculator.addBet(playerId, netContribution);
       }
 
       logger.info('Player action processed', {
         gameId: this.gameId,
         playerId,
         action,
-        amount: effectiveAmount,
+        amount: netContribution,
         pot: this.potCalculator.getPot(),
       });
 
@@ -301,8 +291,8 @@ class PokerEngine {
       // Calculate rake
       const rake = this.potCalculator.calculateRake(this.potCalculator.getPot());
 
-      // Calculate side pots for all-in scenarios
-      const sidePots = this.potCalculator.calculateSidePots();
+      // Calculate side pots for all-in scenarios; pass folded set so only active players can win
+      const sidePots = this.potCalculator.calculateSidePots(this.stateMachine.folded);
 
       // Distribute pot (handles side pots if present)
       const distribution = this.potCalculator.distributePot(winners, rake, {
@@ -389,6 +379,8 @@ class PokerEngine {
       })),
       activePlayers: this.stateMachine.getActivePlayers().length,
       currentBet: this.stateMachine.currentBet,
+      minRaise: this.stateMachine.minRaise,
+      playerBetsThisRound: { ...this.stateMachine.playerBetsThisRound },
       currentActorId: this.stateMachine.currentActorId,
       buttonPosition: this.stateMachine.buttonPosition,
     };
