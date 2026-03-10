@@ -67,7 +67,7 @@ resource "aws_lightsail_instance" "app" {
 
   tags = {
     Project     = var.project_name
-    Environment = var.node_env
+    Environment = "production"
     ManagedBy   = "terraform"
   }
 }
@@ -82,9 +82,6 @@ resource "aws_lightsail_static_ip_attachment" "app" {
 
   static_ip_name = var.static_ip_name
   instance_name  = aws_lightsail_instance.app.name
-
-  # Ensure the IP resource is fully created before attaching
-  depends_on = [aws_lightsail_static_ip.app]
 }
 
 resource "aws_lightsail_instance_public_ports" "app" {

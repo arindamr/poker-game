@@ -138,21 +138,7 @@ fi
 
 docker compose up -d --build "$${SERVICES[@]}"
 
-# Wait for the backend container to be healthy before running migrations.
-echo "[bootstrap] waiting for backend to be healthy..."
-for i in $(seq 1 30); do
-  if docker exec poker_backend node -e \
-    "require('http').get('http://localhost:3000/health',(r)=>{process.exit(r.statusCode===200?0:1)})" \
-    >/dev/null 2>&1; then
-    echo "[bootstrap] backend is healthy (attempt $i)"
-    break
-  fi
-  if [ "$i" -eq 30 ]; then
-    fail "Backend did not become healthy after 60 seconds"
-  fi
-  sleep 2
-done
-
+# Apply DB migrations after services come up.
 docker exec poker_backend npm run migrate
 
 curl -fsS http://localhost:3000/health >/dev/null || fail "Backend health check failed after bootstrap"

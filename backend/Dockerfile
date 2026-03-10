@@ -32,4 +32,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 # Use dumb-init to handle signals properly and run our entrypoint wrapper
 ENTRYPOINT ["dumb-init", "--", "/app/docker-entrypoint.sh"]
 
-CMD ["node", "src/server.js"]
+CMD ["node", "src/index.js"]

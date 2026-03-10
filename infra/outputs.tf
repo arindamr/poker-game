@@ -30,7 +30,7 @@ output "instance_private_ip" {
 
 output "api_url" {
   description = "Suggested API URL."
-  value       = local.api_fqdn != "" ? "https://${local.api_fqdn}" : "http://${local.static_ip_address}"
+  value       = local.api_fqdn != "" ? "https://${local.api_fqdn}" : "http://${local.static_ip_address}:3000"
 }
 
 output "ssh_command" {
