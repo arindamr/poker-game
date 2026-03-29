@@ -110,22 +110,59 @@ export const authAPI = {
     email: string;
     password: string;
     confirmPassword: string;
-  }) => apiClient.post('/api/v1/auth/register', data),
+  }) => apiClient.post('/api/auth/register', data),
 
   login: (data: { email: string; password: string }) =>
-    apiClient.post('/api/v1/auth/login', data),
+    apiClient.post('/api/auth/login', data),
 
   logout: () => {
     apiClient.clearToken();
     return Promise.resolve({ success: true });
   },
+
+  // 2FA Security
+  enable2FA: () => apiClient.post('/api/security/2fa/enable'),
+  verify2FA: (token: string) => apiClient.post('/api/security/2fa/verify-setup', { token }),
+  get2FAStatus: () => apiClient.get('/api/security/2fa/status'),
+  disable2FA: (password: string) => apiClient.post('/api/security/2fa/disable', { password }),
+  useBackupCode: (backupCode: string) => apiClient.post('/api/security/2fa/backup-code', { backupCode }),
 };
 
 // Game endpoints
 export const gameAPI = {
   getTables: () => apiClient.get('/api/v1/tables'),
-  createTable: (data: any) => apiClient.post('/api/v1/tables', data),
-  getTableDetails: (tableId: string) => apiClient.get(`/api/v1/tables/${tableId}`),
+  createTable: (data: any) => apiClient.post('/api/game/tables', data),
+  getTableDetails: (tableId: string) => apiClient.get(`/api/game/tables/${tableId}/state`),
+  joinTable: (gameId: string, buyIn: number) => apiClient.post(`/api/game/tables/${gameId}/join`, { buyIn }),
+  processAction: (gameId: string, action: string, amount?: number) => 
+    apiClient.post(`/api/game/tables/${gameId}/action`, { action, amount }),
+  verifyShuffle: (gameId: string, seed: string, deck: number[]) => 
+    apiClient.post(`/api/game/tables/${gameId}/verify-shuffle`, { seed, deck }),
+  cashOut: (gameId: string, winnings: number) => 
+    apiClient.post(`/api/game/tables/${gameId}/cash-out`, { winnings }),
+  getHandHistory: (gameId: string) => apiClient.get(`/api/game/tables/${gameId}/history`),
+};
+
+// Compliance & Financial
+export const securityAPI = {
+  initiateKYC: (data: { firstName: string; lastName: string; dateOfBirth: string }) => 
+    apiClient.post('/api/security/kyc/initiate', data),
+  getKYCStatus: () => apiClient.get('/api/security/kyc/status'),
+  deposit: (data: { amount: number; paymentMethod: string }) => 
+    apiClient.post('/api/security/financial/deposit', data),
+  selfExclude: (duration: string) => 
+    apiClient.post('/api/security/responsible-gaming/self-exclude', { duration }),
+  getComplianceDashboard: () => apiClient.get('/api/security/compliance/dashboard'),
+};
+
+// Admin endpoints
+export const adminAPI = {
+  getCheatDetections: () => apiClient.get('/api/v1/admin/cheat-detections'),
+  getUserCheatHistory: (userId: string) => apiClient.get(`/api/v1/admin/cheat-detections/${userId}`),
+  reviewCheatSuspicion: (userId: string, data: { status: string; notes: string }) => 
+    apiClient.post(`/api/v1/admin/cheat-suspicions/${userId}/review`, data),
+  banUser: (userId: string, reason: string) => 
+    apiClient.post(`/api/v1/admin/cheat-suspicions/${userId}/ban`, { reason }),
 };
 
 // User endpoints

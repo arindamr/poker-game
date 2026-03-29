@@ -227,7 +227,7 @@ router.post('/tables/:gameId/join', authenticateToken, rateLimiter.middleware({ 
 /**
  * Player Action (Bet, Check, Fold, etc.)
  */
-router.post('/tables/:gameId/action', authenticateToken, rateLimiter.middleware({ maxAttempts: 100, windowMs: 10000, endpoint: 'table_action' }), async (req, res) => {
+router.post('/tables/:gameId/action', authenticateToken, gameValidation.action, rateLimiter.middleware({ maxAttempts: 100, windowMs: 10000, endpoint: 'table_action' }), async (req, res) => {
   try {
     const userId = req.user.id;
     const { gameId } = req.params;

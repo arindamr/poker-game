@@ -38,6 +38,7 @@ module.exports = {
     rateLimitWindowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || 900000, 10),
     rateLimitMaxRequests: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || 100, 10),
     enableRateLimiting: process.env.ENABLE_RATE_LIMITING !== 'false',
+    validateSessionIP: process.env.VALIDATE_SESSION_IP === 'true',
   },
   
   // Game Configuration

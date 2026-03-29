@@ -26,7 +26,7 @@ const Session = {
   findByTokenHash: async (tokenHash) => {
     try {
       return await db.getOne(
-        `SELECT id, user_id, token_hash, expires_at, is_active, last_activity
+        `SELECT id, user_id, token_hash, ip_address, expires_at, is_active, last_activity
          FROM sessions WHERE token_hash = $1 AND is_active = true`,
         [tokenHash],
       );

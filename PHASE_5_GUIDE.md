@@ -106,14 +106,14 @@ await antiCheatEngine.detectCollusion(gameId, tableId);
 const isValid = await antiCheatEngine.verifyShuffle(gameId, seed, deck);
 ```
 
-### 2.2 Game Action Monitoring (Pending)
-Create endpoints:
-```javascript
-POST /api/admin/cheat-detections - List detections
-GET /api/admin/cheat-detections/:userId - User history
-POST /api/admin/cheat-suspicions/:userId/review - Manual review
-POST /api/admin/cheat-suspicions/:userId/ban - Ban user
-```
+### 2.2 Game Action Monitoring (Complete)
+**File**: `backend/src/api/controllers/adminController.js`
+
+Endpoints:
+- `GET /api/v1/admin/cheat-detections` - List all suspicions
+- `GET /api/v1/admin/cheat-detections/:userId` - User-specific history
+- `POST /api/v1/admin/cheat-suspicions/:userId/review` - Admin review status
+- `POST /api/v1/admin/cheat-suspicions/:userId/ban` - Administrative ban
 
 ---
 

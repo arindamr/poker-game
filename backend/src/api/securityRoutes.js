@@ -343,7 +343,7 @@ router.get('/kyc/status', authenticateToken, async (req, res) => {
 });
 
 // Process deposit with compliance checks
-router.post('/financial/deposit', authenticateToken, rateLimiter.middleware({ max: 20, window: 3600000 }), async (req, res) => {
+router.post('/financial/deposit', authenticateToken, securityValidation.deposit, rateLimiter.middleware({ max: 20, window: 3600000 }), async (req, res) => {
   try {
     const userId = req.user.id;
     const { amount, paymentMethod } = req.body;
