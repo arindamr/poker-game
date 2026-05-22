@@ -1,306 +1,173 @@
-# 🚀 Quick Start Guide - Poker Game Local Testing
+# Quick Start
+
+How to run, test, and deploy this project **locally**. Verified against the current code (2026-05-22).
+
+> This file replaces an earlier, inaccurate version. The committed `README.md` is also stale (it describes a Flutter frontend — the frontend is **Next.js**). Trust this file and the code.
+
+---
 
 ## Prerequisites
 
-- Docker & Docker Compose installed
-- Node.js 16+ (for running scripts)
-- curl (for testing endpoints)
-- Postman (optional, for GUI testing)
+- **Docker** + Docker Compose v2 (`docker compose`, not `docker-compose`)
+- **Node.js 18+** and npm (for running backend/frontend outside Docker)
+- `curl` / `jq` for API checks (optional)
 
-## Step 1: Start the Application
+Stack: backend on **:3000**, frontend dev on **:3002**, Postgres **:5432**, Redis **:6379**. Full Docker stack also runs nginx on **:80**.
+
+---
+
+## Run Locally
+
+There are two practical setups. **Option A** is closest to production; **Option B** is best for active development.
+
+### Option A — Full stack in Docker (recommended for a realistic run)
+
+Brings up nginx + frontend + backend + websocket + postgres + redis.
 
 ```bash
-# Navigate to deployment directory
-cd deployment/aws
+# 1. Create the env file the compose stack reads
+cp .env.example deployment/aws/.env
+#    Edit deployment/aws/.env — at minimum set DB_USER, DB_PASSWORD, DB_NAME,
+#    JWT_SECRET, JWT_REFRESH_SECRET, NODE_ENV=development, CORS_ORIGIN, SEED_DEMO_USER, ADMIN_EMAILS, LOG_LEVEL
 
-# Start all services (backend, PostgreSQL, Redis, Nginx)
-docker-compose up -d
+# 2. Build & start
+docker compose -f deployment/aws/docker-compose.yml --env-file deployment/aws/.env up -d --build
 
-# Wait 15-30 seconds for services to initialize
-sleep 30
+# 3. Apply DB migrations (this compose file does NOT auto-run them)
+docker exec poker_backend npm run migrate
 
-# Verify all services are running
-docker-compose ps
+# 4. Verify
+curl http://localhost:3000/health        # -> {"status":"ok","timestamp":"..."}
+docker compose -f deployment/aws/docker-compose.yml ps
 ```
 
-Expected output: All containers should show `Up` status
-- poker_backend
-- poker_postgres
-- poker_redis
-- poker_nginx
+Open the app at **http://localhost** (nginx serves the frontend; `/api` and `/socket.io/` proxy to the backend).
 
-## Step 2: Verify System Health
+### Option B — Backend in Docker, frontend on host (best for iterating on UI)
+
+The dev compose ([`docker/docker-compose.yml`](docker/docker-compose.yml)) has sane env defaults, runs `npm run dev` (nodemon), and **auto-applies migrations** on a fresh Postgres volume.
 
 ```bash
-# Check health endpoint
+# Backend + Postgres + Redis
+docker compose -f docker/docker-compose.yml up -d
+# (first-time helper alternative: ./setup-docker.sh)
+
+# Frontend — separate terminal. Backend is :3000, so run the frontend on :3002.
+cd frontend
+npm install
+NEXT_PUBLIC_API_URL=http://localhost:3000 npm run dev -- -p 3002
+```
+
+Open **http://localhost:3002**. `CORS_ORIGIN` already includes `http://localhost:3002` (see `backend/src/config/env.js`).
+
+If Postgres volume already existed (migrations didn't auto-run): `docker exec poker-app-backend npm run migrate`.
+
+### Demo user
+
+In development with `SEED_DEMO_USER` ≠ `false`, the backend seeds:
+
+```
+email:    test@example.com
+password: Demo@123456
+```
+
+Use this to log in. **Note:** the registration flow is currently broken (a successful signup is shown as an error — see [TODO.md](TODO.md) `F2`), so prefer the demo user for testing.
+
+### Smoke-test the API
+
+```bash
+# Health
 curl http://localhost:3000/health
 
-# Expected response:
-# {"status":"healthy","timestamp":"2024-01-15T10:30:00Z","uptime":"30s"}
-```
-
-## Step 3: Quick API Test
-
-### 3A. Create a Test Account
-
-```bash
-curl -X POST http://localhost:3000/api/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "testuser@pokergame.com",
-    "password": "SecurePass123!",
-    "firstName": "Test",
-    "lastName": "User"
-  }'
-
-# Save the access_token from response
-```
-
-### 3B. Login
-
-```bash
+# Login (returns tokens.accessToken). /api/auth/login is rate-limited to 5/min.
 curl -X POST http://localhost:3000/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "testuser@pokergame.com",
-    "password": "SecurePass123!"
-  }'
+  -H 'Content-Type: application/json' \
+  -d '{"email":"test@example.com","password":"Demo@123456"}'
 
-# Save access_token as: TOKEN="your_token_here"
+# Authenticated call
+TOKEN="<accessToken from above>"
+curl http://localhost:3000/api/v1/tables -H "Authorization: Bearer $TOKEN"
 ```
 
-### 3C. Test Security Features
+Full endpoint reference: [API.md](API.md).
+
+---
+
+## Test
+
+### Backend (Jest + Supertest)
 
 ```bash
-TOKEN="your_token_here"
-
-# Enable 2FA
-curl -X POST http://localhost:3000/api/security/2fa/enable \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"email": "testuser@pokergame.com"}'
-
-# Get KYC Status
-curl -X GET http://localhost:3000/api/security/kyc/status \
-  -H "Authorization: Bearer $TOKEN"
-
-# View Metrics
-curl http://localhost:3000/metrics | head -20
+cd backend
+npm install
+npm test                                  # full suite + coverage
+npm test -- test/engine.test.js            # one file
+npm test -- --testNamePattern="deal"       # by test name
+npm run test:integration                   # integration tests — needs a running DB
+npm run lint                               # airbnb-base ESLint
 ```
 
-## Step 4: Automated Testing
+### Frontend
 
-Run the comprehensive test suite:
+No unit-test suite exists. Only:
 
 ```bash
-# Make test script executable
-chmod +x test-local.sh
-
-# Run all tests
-./test-local.sh
+cd frontend
+npm run lint        # eslint-config-next
+npm run build       # type-check + production build
 ```
 
-This will test:
-- ✅ Docker services
-- ✅ Health checks
-- ✅ Authentication
-- ✅ 2FA functionality
-- ✅ Rate limiting
-- ✅ Security headers
-- ✅ Game endpoints
-- ✅ Compliance features
-- ✅ Database connectivity
-- ✅ Redis connectivity
-
-## Step 5: Manual API Testing (Recommended)
-
-### Option A: Using Postman (GUI)
-
-1. Open Postman
-2. Click "Import" → Select `Poker_Game_API.postman_collection.json`
-3. Set variables in Postman:
-   - `base_url`: `http://localhost:3000`
-   - `access_token`: (get from login response)
-   - `game_id`: (get from create table response)
-4. Run requests from the collection
-
-### Option B: Using curl
-
-Follow the examples in [TESTING_GUIDE.md](TESTING_GUIDE.md)
-
-### Option C: Using the bash script
+### Endpoint smoke tests
 
 ```bash
-./test-local.sh
+./test-local.sh     # runs curl-based checks against a running Docker stack
 ```
 
-## Step 6: Monitor the Application
+---
 
-### View Real-time Logs
+## Deploy Locally (production-shaped)
 
-```bash
-# Backend logs
-docker logs -f poker_backend
+"Deploy locally" = run the full production-shaped stack on your machine. That is **Option A** above: the `deployment/aws/docker-compose.yml` stack behind nginx on port 80.
 
-# PostgreSQL logs
-docker logs poker_postgres
+For the **real** cloud deployment (AWS Lightsail via Terraform — `terraform apply`, cloud-init bootstrap, `deploy.sh`), see [INFRASTRUCTURE.md](INFRASTRUCTURE.md). Do not run `terraform apply` as part of local work.
 
-# Redis logs
-docker logs poker_redis
-```
+---
 
-### View Metrics
+## Common Tasks
 
 ```bash
-# Prometheus format
-curl http://localhost:3000/metrics
+# Logs
+docker logs -f poker_backend                       # Option A backend
+docker logs -f poker-app-backend                   # Option B backend
 
-# Admin dashboard (JSON)
-curl http://localhost:3000/admin/metrics | jq .
-```
-
-### Database Inspection
-
-```bash
-# Connect to PostgreSQL
+# Database shell
 docker exec -it poker_postgres psql -U postgres -d poker_game
+#   \dt                 list tables
+#   SELECT id,email FROM users LIMIT 5;
 
-# Useful queries:
-# List all tables
-\dt
+# Redis shell
+docker exec -it poker_redis redis-cli ping          # -> PONG
 
-# Check users
-SELECT id, email, created_at FROM users LIMIT 5;
+# Re-run migrations
+docker exec poker_backend npm run migrate
 
-# Check 2FA audit
-SELECT user_id, status, created_at FROM two_factor_audit LIMIT 5;
-
-# Check cheat detection
-SELECT user_id, detection_type, risk_score FROM cheat_detection LIMIT 5;
-
-# Exit
-\q
+# Tear down
+docker compose -f deployment/aws/docker-compose.yml down       # keep volumes
+docker compose -f deployment/aws/docker-compose.yml down -v    # also wipe DB/Redis data
 ```
 
-### Redis Inspection
+---
 
-```bash
-# Connect to Redis
-docker exec -it poker_redis redis-cli
+## Troubleshooting
 
-# View keys
-KEYS *
+| Symptom | Cause / fix |
+|---------|-------------|
+| Backend won't start, "JWT secrets must be configured" | `NODE_ENV` is not `development` and secrets are still defaults. Set real `JWT_SECRET`/`JWT_REFRESH_SECRET` or `NODE_ENV=development`. |
+| Port 3000 already in use | `lsof -ti:3000 \| xargs kill -9`, or another service is bound. |
+| Login returns 429 | `/api/auth/login` is rate-limited to 5/min. Wait, or set `ENABLE_RATE_LIMITING=false`. |
+| Tables empty / DB errors on first run | Migrations didn't run. `docker exec <backend> npm run migrate`. |
+| Registration shows an error on success | Known bug — TODO `F2`. Use the demo user instead. |
+| `/profile` page fails to load | Known bug — TODO `F1` (wrong endpoint + response shape). |
+| `docker-compose: command not found` | Use Docker Compose **v2** syntax: `docker compose`. |
 
-# Get rate limit info
-GET rate_limit:user_123
-
-# Exit
-exit
-```
-
-## Step 7: Troubleshooting
-
-### Common Issues
-
-**Port Already in Use**
-```bash
-# Kill process on port 3000
-lsof -ti:3000 | xargs kill -9
-```
-
-**Database Connection Failed**
-```bash
-# Check PostgreSQL is running
-docker exec poker_postgres pg_isready
-
-# Reset database
-docker exec poker_postgres psql -U postgres -c "DROP DATABASE IF EXISTS poker_game;"
-docker exec poker_postgres psql -U postgres -c "CREATE DATABASE poker_game;"
-```
-
-**Redis Connection Failed**
-```bash
-# Test Redis connection
-docker exec poker_redis redis-cli ping
-# Expected: PONG
-```
-
-**Containers Won't Start**
-```bash
-# Clean up and restart
-docker-compose down -v
-docker-compose up -d --build
-```
-
-## Step 8: Full Test Workflow
-
-Complete test sequence:
-
-```bash
-# 1. Start services
-cd deployment/aws
-docker-compose up -d
-sleep 30
-
-# 2. Run automated tests
-cd ../..
-./test-local.sh
-
-# 3. Check results
-echo "✅ Check TESTING_GUIDE.md for manual verification"
-
-# 4. View logs
-docker logs poker_backend | tail -50
-
-# 5. Check metrics
-curl http://localhost:3000/admin/metrics | jq .
-
-# 6. Run integration tests
-npm test -- test/phase5.integration.test.js
-
-# 7. Cleanup (when done)
-cd deployment/aws
-docker-compose down
-```
-
-## Key Endpoints Reference
-
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/health` | GET | Health check |
-| `/metrics` | GET | Prometheus metrics |
-| `/admin/metrics` | GET | Admin dashboard |
-| `/api/auth/register` | POST | Register new user |
-| `/api/auth/login` | POST | Login user |
-| `/api/security/2fa/enable` | POST | Enable 2FA |
-| `/api/security/kyc/initiate` | POST | Start KYC verification |
-| `/api/security/financial/deposit` | POST | Make deposit |
-| `/api/game/tables` | POST | Create game table |
-| `/api/game/tables/{id}/join` | POST | Join game |
-| `/api/game/tables/{id}/action` | POST | Player action |
-| `/api/security/compliance/dashboard` | GET | View compliance data |
-
-## Performance Tips
-
-1. **First Run**: Services take 15-30 seconds to initialize
-2. **Token Expiration**: Access tokens expire in 1 hour
-3. **Rate Limiting**: After ~100 requests/minute, you'll get rate limited
-4. **Database**: Queries may be slower on first run (indexes building)
-
-## Next Steps
-
-1. ✅ Complete local testing
-2. → Run integration test suite
-3. → Perform load testing (1000+ users)
-4. → Security penetration testing
-5. → Deploy to staging environment
-6. → Deploy to production
-7. → Release to app stores
-
-## Support
-
-For detailed testing instructions, see: [TESTING_GUIDE.md](TESTING_GUIDE.md)
-
-For API documentation, see: [PHASE_5_GUIDE.md](PHASE_5_GUIDE.md)
-
-For troubleshooting, see bottom of: [TESTING_GUIDE.md](TESTING_GUIDE.md#troubleshooting)
+Before fixing any unexpected behavior, **check [TODO.md](TODO.md)** — it may already be a known, catalogued issue.
