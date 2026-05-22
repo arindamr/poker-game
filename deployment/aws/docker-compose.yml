@@ -25,7 +25,6 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ../db/migrations:/docker-entrypoint-initdb.d
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER}"]
       interval: 10s
@@ -79,10 +78,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    volumes:
-      - ../../backend/src:/app/src
-      - ../../backend/migrations:/app/migrations
-      - /app/node_modules
     networks:
       - poker_network
     restart: unless-stopped
