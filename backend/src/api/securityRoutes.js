@@ -10,8 +10,9 @@ const twoFactorAuth = require('../utils/twoFactorAuth');
 const antiCheatEngine = require('../game/antiCheatEngine');
 const complianceService = require('../utils/complianceService');
 const rateLimiter = require('../middleware/enhancedRateLimiter');
-const { authenticateToken, authorizeRole } = require('./middleware/authMiddleware');
+const { authenticateToken, requireAdmin } = require('./middleware/authMiddleware');
 const { securityValidation } = require('../middleware/inputValidation');
+const { comparePassword } = require('../utils/crypto');
 const logger = require('../utils/logger');
 
 const isSchemaError = (error) => {
@@ -133,11 +134,10 @@ router.post('/2fa/disable', authenticateToken, rateLimiter.middleware({ max: 5, 
 
     // Verify password
     const user = await db.query('SELECT password_hash FROM users WHERE id = $1', [userId]);
-    const crypto = require('crypto');
-    const passwordValid = crypto.timingSafeEqual(
-      Buffer.from(user.rows[0].password_hash),
-      Buffer.from(password)
-    );
+    if (!user.rows[0]) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    const passwordValid = await comparePassword(password, user.rows[0].password_hash);
 
     if (!passwordValid) {
       return res.status(401).json({ error: 'Invalid password' });
@@ -443,7 +443,7 @@ router.post('/responsible-gaming/self-exclude', authenticateToken, rateLimiter.m
 });
 
 // Get compliance dashboard (admin only)
-router.get('/compliance/dashboard', authenticateToken, authorizeRole('admin'), async (req, res) => {
+router.get('/compliance/dashboard', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const report = await complianceService.generateComplianceReport(
       new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
