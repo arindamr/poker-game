@@ -128,21 +128,6 @@ export const authAPI = {
   useBackupCode: (backupCode: string) => apiClient.post('/api/security/2fa/backup-code', { backupCode }),
 };
 
-// Game endpoints
-export const gameAPI = {
-  getTables: () => apiClient.get('/api/v1/tables'),
-  createTable: (data: any) => apiClient.post('/api/game/tables', data),
-  getTableDetails: (tableId: string) => apiClient.get(`/api/game/tables/${tableId}/state`),
-  joinTable: (gameId: string, buyIn: number) => apiClient.post(`/api/game/tables/${gameId}/join`, { buyIn }),
-  processAction: (gameId: string, action: string, amount?: number) => 
-    apiClient.post(`/api/game/tables/${gameId}/action`, { action, amount }),
-  verifyShuffle: (gameId: string, seed: string, deck: number[]) => 
-    apiClient.post(`/api/game/tables/${gameId}/verify-shuffle`, { seed, deck }),
-  cashOut: (gameId: string, winnings: number) => 
-    apiClient.post(`/api/game/tables/${gameId}/cash-out`, { winnings }),
-  getHandHistory: (gameId: string) => apiClient.get(`/api/game/tables/${gameId}/history`),
-};
-
 // Compliance & Financial
 export const securityAPI = {
   initiateKYC: (data: { firstName: string; lastName: string; dateOfBirth: string }) => 

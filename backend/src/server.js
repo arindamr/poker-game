@@ -26,7 +26,6 @@ const authRoutes = require('./api/routes/auth');
 const userRoutes = require('./api/routes/users');
 const tableRoutes = require('./api/routes/tables');
 const securityRoutes = require('./api/securityRoutes');
-const gameRoutes = require('./api/gameRoutes');
 const adminRoutes = require('./api/routes/admin');
 
 // Initialize Express app
@@ -140,7 +139,6 @@ app.use('/api/v1/admin', adminRoutes);
 
 // Phase 5 Security Routes
 app.use('/api/security', securityRoutes);      // 2FA, KYC, AML, SAR
-app.use('/api/game', gameRoutes);              // Game with anti-cheat
 
 // 404 handler
 app.use((req, res) => {
