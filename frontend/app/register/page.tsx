@@ -39,6 +39,9 @@ export default function Register() {
       if (token && response.success) {
         apiClient.setToken(token);
         localStorage.setItem('authToken', token);
+        if (response.user?.id) {
+          localStorage.setItem('userId', response.user.id);
+        }
         localStorage.setItem('userName', username);
         localStorage.setItem('userEmail', email);
         router.push('/dashboard');

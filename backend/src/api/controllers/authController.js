@@ -49,6 +49,28 @@ const register = asyncHandler(async (req, res) => {
 
   logger.info('User registered', { userId: newUser.id, email });
 
+  // Issue tokens so the client is authenticated immediately after registration
+  const tokenPayload = {
+    sub: newUser.id,
+    username: newUser.username,
+    email: newUser.email,
+  };
+  const accessToken = generateToken(tokenPayload);
+  const refreshToken = generateRefreshToken(tokenPayload);
+  const tokenHash = hashToken(accessToken);
+  const deviceFingerprint = generateDeviceFingerprint(req);
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+
+  await Session.create(
+    newUser.id,
+    tokenHash,
+    deviceFingerprint,
+    req.ip,
+    req.headers['user-agent'],
+    expiresAt,
+  );
+  await redis.set(`refresh_token:${newUser.id}`, refreshToken, 7 * 24 * 60 * 60); // 7 days
+
   res.status(201).json({
     success: true,
     message: 'User registered successfully',
@@ -56,6 +78,10 @@ const register = asyncHandler(async (req, res) => {
       id: newUser.id,
       username: newUser.username,
       email: newUser.email,
+    },
+    tokens: {
+      accessToken,
+      refreshToken,
     },
   });
 });
@@ -184,6 +210,20 @@ const refreshToken = asyncHandler(async (req, res) => {
     username: payload.username,
     email: payload.email,
   });
+
+  // Persist a session for the new token so authenticateToken can validate it
+  const tokenHash = hashToken(newAccessToken);
+  const deviceFingerprint = generateDeviceFingerprint(req);
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+
+  await Session.create(
+    payload.sub,
+    tokenHash,
+    deviceFingerprint,
+    req.ip,
+    req.headers['user-agent'],
+    expiresAt,
+  );
 
   logger.debug('Access token refreshed', { userId: payload.sub });
 

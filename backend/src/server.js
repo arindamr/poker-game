@@ -18,6 +18,7 @@ const securityHeaders = require('./middleware/securityHeaders');
 const enhancedRateLimiter = require('./middleware/enhancedRateLimiter');
 const monitoringService = require('./monitoring/monitoringService');
 const { authenticateToken } = require('./api/middleware/authMiddleware');
+const { errorHandler } = require('./api/middleware/errorHandler');
 const { isAllowedOrigin } = require('./utils/corsOrigin');
 
 // Routes
@@ -148,6 +149,9 @@ app.use((req, res) => {
     error: 'Endpoint not found',
   });
 });
+
+// Global error handler (must be registered after all routes)
+app.use(errorHandler);
 
 // Initialize WebSocket
 const io = initializeWebSocket(server);

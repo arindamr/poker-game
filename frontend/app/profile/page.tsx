@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { ApiClient } from '@/lib/api';
 
 interface UserProfile {
-  id: number;
+  id: string;
   username: string;
   email: string;
   balance: number;
@@ -40,15 +40,32 @@ export default function Profile() {
 
   const loadProfile = async () => {
     try {
+      const userId = localStorage.getItem('userId');
+      if (!userId) {
+        throw new Error('Not logged in');
+      }
       const client = new ApiClient();
-      const response = await client.get<UserProfile>('/api/v1/users/profile');
-      if (!response.data) {
+      const response = await client.get(`/api/v1/users/${userId}`);
+      const user = response.user || response.data;
+      if (!user) {
         throw new Error('Profile data missing from response');
       }
-      setProfile(response.data);
+      // Map the backend user record onto the profile shape. Game stats are not
+      // tracked yet, so they default to 0 (see TODO F1).
+      const mapped: UserProfile = {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        balance: Number(user.account_balance ?? 0),
+        joinedAt: user.created_at,
+        totalGames: 0,
+        winRate: 0,
+        totalWinnings: 0,
+      };
+      setProfile(mapped);
       setFormData({
-        username: response.data.username,
-        email: response.data.email,
+        username: mapped.username,
+        email: mapped.email,
       });
       setError('');
     } catch (err: any) {
@@ -61,8 +78,12 @@ export default function Profile() {
   const handleUpdateProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      const userId = localStorage.getItem('userId');
+      if (!userId) {
+        throw new Error('Not logged in');
+      }
       const client = new ApiClient();
-      await client.put('/api/v1/users/profile', formData);
+      await client.put(`/api/v1/users/${userId}`, formData);
       setIsEditing(false);
       loadProfile();
     } catch (err: any) {

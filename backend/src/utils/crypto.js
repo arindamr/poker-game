@@ -34,7 +34,13 @@ const comparePassword = async (password, hash) => {
  */
 const generateToken = (payload, expiresIn = config.jwt.expiration) => {
   try {
-    const token = jwt.sign(payload, config.jwt.secret, { expiresIn });
+    // jwtid makes every issued token unique even when payload + iat (1s
+    // precision) are identical — prevents sessions.token_hash collisions
+    // when tokens are issued for the same user within the same second.
+    const token = jwt.sign(payload, config.jwt.secret, {
+      expiresIn,
+      jwtid: crypto.randomBytes(16).toString('hex'),
+    });
     return token;
   } catch (error) {
     logger.error('Error generating token', { error: error.message });
