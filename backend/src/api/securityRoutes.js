@@ -33,7 +33,7 @@ router.post('/2fa/enable', authenticateToken, rateLimiter.middleware({ max: 10, 
     // Check if 2FA already enabled
     const user = await db.query('SELECT two_fa_enabled FROM users WHERE id = $1', [userId]);
     if (user.rows[0]?.two_fa_enabled) {
-      return res.status(400).json({ error: '2FA already enabled' });
+      return res.status(400).json({ success: false, error: '2FA already enabled' });
     }
 
     // Generate 2FA secret and backup codes
@@ -51,6 +51,7 @@ router.post('/2fa/enable', authenticateToken, rateLimiter.middleware({ max: 10, 
     logger.info(`2FA setup initiated for user ${userId}`);
 
     res.json({
+      success: true,
       secret,
       qrCode,
       backupCodes,
@@ -59,9 +60,9 @@ router.post('/2fa/enable', authenticateToken, rateLimiter.middleware({ max: 10, 
   } catch (error) {
     logger.error('2FA enable error:', error);
     if (isSchemaError(error)) {
-      return res.status(501).json({ error: '2FA not implemented' });
+      return res.status(501).json({ success: false, error: '2FA not implemented' });
     }
-    res.status(500).json({ error: 'Failed to enable 2FA' });
+    res.status(500).json({ success: false, error: 'Failed to enable 2FA' });
   }
 });
 
@@ -72,7 +73,7 @@ router.post('/2fa/verify-setup', authenticateToken, rateLimiter.middleware({ max
     const { token } = req.body;
 
     if (!token) {
-      return res.status(400).json({ error: 'Token required' });
+      return res.status(400).json({ success: false, error: 'Token required' });
     }
 
     // Get pending 2FA secret
@@ -82,7 +83,7 @@ router.post('/2fa/verify-setup', authenticateToken, rateLimiter.middleware({ max
     );
 
     if (!user.rows[0]) {
-      return res.status(400).json({ error: 'No pending 2FA setup' });
+      return res.status(400).json({ success: false, error: 'No pending 2FA setup' });
     }
 
     // Verify token
@@ -95,7 +96,7 @@ router.post('/2fa/verify-setup', authenticateToken, rateLimiter.middleware({ max
         [userId, 'setup_failed', false, req.ip]
       );
 
-      return res.status(401).json({ error: 'Invalid token' });
+      return res.status(401).json({ success: false, error: 'Invalid token' });
     }
 
     // Enable 2FA
@@ -112,13 +113,13 @@ router.post('/2fa/verify-setup', authenticateToken, rateLimiter.middleware({ max
 
     logger.info(`2FA enabled for user ${userId}`);
 
-    res.json({ message: '2FA successfully enabled' });
+    res.json({ success: true, message: '2FA successfully enabled' });
   } catch (error) {
     logger.error('2FA verify setup error:', error);
     if (isSchemaError(error)) {
-      return res.status(501).json({ error: '2FA not implemented' });
+      return res.status(501).json({ success: false, error: '2FA not implemented' });
     }
-    res.status(500).json({ error: 'Failed to verify 2FA' });
+    res.status(500).json({ success: false, error: 'Failed to verify 2FA' });
   }
 });
 
@@ -129,18 +130,18 @@ router.post('/2fa/disable', authenticateToken, rateLimiter.middleware({ max: 5, 
     const { password } = req.body;
 
     if (!password) {
-      return res.status(400).json({ error: 'Password required' });
+      return res.status(400).json({ success: false, error: 'Password required' });
     }
 
     // Verify password
     const user = await db.query('SELECT password_hash FROM users WHERE id = $1', [userId]);
     if (!user.rows[0]) {
-      return res.status(404).json({ error: 'User not found' });
+      return res.status(404).json({ success: false, error: 'User not found' });
     }
     const passwordValid = await comparePassword(password, user.rows[0].password_hash);
 
     if (!passwordValid) {
-      return res.status(401).json({ error: 'Invalid password' });
+      return res.status(401).json({ success: false, error: 'Invalid password' });
     }
 
     // Disable 2FA
@@ -154,13 +155,13 @@ router.post('/2fa/disable', authenticateToken, rateLimiter.middleware({ max: 5, 
 
     logger.info(`2FA disabled for user ${userId}`);
 
-    res.json({ message: '2FA successfully disabled' });
+    res.json({ success: true, message: '2FA successfully disabled' });
   } catch (error) {
     logger.error('2FA disable error:', error);
     if (isSchemaError(error)) {
-      return res.status(501).json({ error: '2FA not implemented' });
+      return res.status(501).json({ success: false, error: '2FA not implemented' });
     }
-    res.status(500).json({ error: 'Failed to disable 2FA' });
+    res.status(500).json({ success: false, error: 'Failed to disable 2FA' });
   }
 });
 
@@ -169,13 +170,13 @@ router.get('/2fa/status', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.id;
     const status = await twoFactorAuth.get2FAStatus(userId);
-    res.json(status);
+    res.json({ success: true, ...status });
   } catch (error) {
     logger.error('2FA status error:', error);
     if (isSchemaError(error)) {
-      return res.status(501).json({ error: '2FA not implemented' });
+      return res.status(501).json({ success: false, error: '2FA not implemented' });
     }
-    res.status(500).json({ error: 'Failed to get 2FA status' });
+    res.status(500).json({ success: false, error: 'Failed to get 2FA status' });
   }
 });
 
@@ -186,24 +187,24 @@ router.post('/2fa/backup-code', authenticateToken, rateLimiter.middleware({ max:
     const { backupCode } = req.body;
 
     if (!backupCode) {
-      return res.status(400).json({ error: 'Backup code required' });
+      return res.status(400).json({ success: false, error: 'Backup code required' });
     }
 
     const result = await twoFactorAuth.useBackupCode(userId, backupCode);
 
     if (!result) {
-      return res.status(401).json({ error: 'Invalid backup code' });
+      return res.status(401).json({ success: false, error: 'Invalid backup code' });
     }
 
     logger.info(`Backup code used for user ${userId}`);
 
-    res.json({ message: 'Backup code verified', remaining: result.remaining });
+    res.json({ success: true, message: 'Backup code verified', remaining: result.remaining });
   } catch (error) {
     logger.error('Backup code error:', error);
     if (isSchemaError(error)) {
-      return res.status(501).json({ error: '2FA not implemented' });
+      return res.status(501).json({ success: false, error: '2FA not implemented' });
     }
-    res.status(500).json({ error: 'Failed to use backup code' });
+    res.status(500).json({ success: false, error: 'Failed to use backup code' });
   }
 });
 
@@ -236,8 +237,8 @@ router.post('/game/:gameId/monitor-cheat', authenticateToken, async (req, res) =
     // If suspicious, log it
     if (totalRisk > 0.7) {
       await db.query(
-        `INSERT INTO cheat_detection 
-         (user_id, game_id, suspicion_type, risk_score, details, created_at) 
+        `INSERT INTO cheat_detection
+         (user_id, game_id, suspicion_type, risk_score, details, created_at)
          VALUES ($1, $2, $3, $4, $5, NOW())`,
         [
           userId,
@@ -259,10 +260,10 @@ router.post('/game/:gameId/monitor-cheat', authenticateToken, async (req, res) =
       }
     }
 
-    res.json({ riskScore: totalRisk, flagged: totalRisk > 0.7 });
+    res.json({ success: true, riskScore: totalRisk, flagged: totalRisk > 0.7 });
   } catch (error) {
     logger.error('Cheat monitoring error:', error);
-    res.status(500).json({ error: 'Failed to monitor cheat' });
+    res.status(500).json({ success: false, error: 'Failed to monitor cheat' });
   }
 });
 
@@ -279,17 +280,17 @@ router.post('/game/:gameId/verify-shuffle', authenticateToken, async (req, res) 
 
       // Log the suspicious shuffle
       await db.query(
-        `INSERT INTO cheat_detection 
-         (game_id, suspicion_type, risk_score, details) 
+        `INSERT INTO cheat_detection
+         (game_id, suspicion_type, risk_score, details)
          VALUES ($1, $2, $3, $4)`,
         [gameId, 'invalid_shuffle', 0.95, JSON.stringify({ seed, deckLength: deck.length })]
       );
     }
 
-    res.json({ valid: isValid });
+    res.json({ success: true, valid: isValid });
   } catch (error) {
     logger.error('Shuffle verification error:', error);
-    res.status(500).json({ error: 'Failed to verify shuffle' });
+    res.status(500).json({ success: false, error: 'Failed to verify shuffle' });
   }
 });
 
@@ -308,7 +309,7 @@ router.post('/kyc/initiate', authenticateToken, rateLimiter.middleware({ max: 5,
 
     if (sanctioned) {
       logger.warn(`User ${userId} is on sanctions list`);
-      return res.status(403).json({ error: 'User is on sanctions list' });
+      return res.status(403).json({ success: false, error: 'User is on sanctions list' });
     }
 
     // Initialize KYC
@@ -316,18 +317,18 @@ router.post('/kyc/initiate', authenticateToken, rateLimiter.middleware({ max: 5,
 
     // Log KYC initiation
     await db.query(
-      `INSERT INTO compliance_audit 
-       (user_id, verification_type, status, details) 
+      `INSERT INTO compliance_audit
+       (user_id, verification_type, status, details)
        VALUES ($1, $2, $3, $4)`,
       [userId, 'kyc', 'initiated', JSON.stringify({ firstName, lastName, dateOfBirth })]
     );
 
     logger.info(`KYC verification initiated for user ${userId}`);
 
-    res.json({ verificationId, message: 'KYC verification started' });
+    res.json({ success: true, verificationId, message: 'KYC verification started' });
   } catch (error) {
     logger.error('KYC initiation error:', error);
-    res.status(500).json({ error: 'Failed to initiate KYC' });
+    res.status(500).json({ success: false, error: 'Failed to initiate KYC' });
   }
 });
 
@@ -336,10 +337,10 @@ router.get('/kyc/status', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.id;
     const status = await complianceService.getComplianceStatus(userId);
-    res.json(status);
+    res.json({ success: true, ...status });
   } catch (error) {
     logger.error('KYC status error:', error);
-    res.status(500).json({ error: 'Failed to get KYC status' });
+    res.status(500).json({ success: false, error: 'Failed to get KYC status' });
   }
 });
 
@@ -350,7 +351,7 @@ router.post('/financial/deposit', authenticateToken, securityValidation.deposit,
     const { amount, paymentMethod } = req.body;
 
     if (!amount || amount <= 0) {
-      return res.status(400).json({ error: 'Invalid amount' });
+      return res.status(400).json({ success: false, error: 'Invalid amount' });
     }
 
     // Check deposit limits
@@ -361,13 +362,13 @@ router.post('/financial/deposit', authenticateToken, securityValidation.deposit,
 
       // Log the violation
       await db.query(
-        `INSERT INTO rate_limit_violations 
-         (user_id, violation_type, details) 
+        `INSERT INTO rate_limit_violations
+         (user_id, violation_type, details)
          VALUES ($1, $2, $3)`,
         [userId, 'deposit_limit', JSON.stringify({ amount, limit: limitViolation })]
       );
 
-      return res.status(403).json({ error: 'Deposit limit exceeded', limit: limitViolation });
+      return res.status(403).json({ success: false, error: 'Deposit limit exceeded', limit: limitViolation });
     }
 
     // Monitor transaction for AML
@@ -375,8 +376,8 @@ router.post('/financial/deposit', authenticateToken, securityValidation.deposit,
 
     // Log the deposit
     await db.query(
-      `INSERT INTO deposits_withdrawals 
-       (user_id, transaction_type, amount, payment_method, status, aml_status) 
+      `INSERT INTO deposit_withdrawals
+       (user_id, transaction_type, amount, payment_method, status, aml_status)
        VALUES ($1, $2, $3, $4, $5, $6)`,
       [userId, 'deposit', amount, paymentMethod, 'pending', amlResult.status]
     );
@@ -391,15 +392,15 @@ router.post('/financial/deposit', authenticateToken, securityValidation.deposit,
 
       logger.warn(`SAR created for user ${userId}: ${amlResult.reason}`);
 
-      return res.status(403).json({ error: 'Transaction flagged for review' });
+      return res.status(403).json({ success: false, error: 'Transaction flagged for review' });
     }
 
     logger.info(`Deposit processed for user ${userId}: ${amount}`);
 
-    res.json({ message: 'Deposit processed', transactionId: 'tx_' + Date.now() });
+    res.json({ success: true, message: 'Deposit processed', transactionId: 'tx_' + Date.now() });
   } catch (error) {
     logger.error('Deposit processing error:', error);
-    res.status(500).json({ error: 'Failed to process deposit' });
+    res.status(500).json({ success: false, error: 'Failed to process deposit' });
   }
 });
 
@@ -411,7 +412,7 @@ router.post('/responsible-gaming/self-exclude', authenticateToken, rateLimiter.m
 
     const validDurations = ['7d', '30d', 'permanent'];
     if (!validDurations.includes(duration)) {
-      return res.status(400).json({ error: 'Invalid duration' });
+      return res.status(400).json({ success: false, error: 'Invalid duration' });
     }
 
     // Enable self-exclusion
@@ -427,18 +428,18 @@ router.post('/responsible-gaming/self-exclude', authenticateToken, rateLimiter.m
 
     // Log self-exclusion
     await db.query(
-      `INSERT INTO self_exclusions 
-       (user_id, duration, enabled_at, until_at) 
+      `INSERT INTO self_exclusions
+       (user_id, duration, enabled_at, until_at)
        VALUES ($1, $2, NOW(), $3)`,
       [userId, duration, untilDate]
     );
 
     logger.info(`Self-exclusion enabled for user ${userId}: ${duration}`);
 
-    res.json({ message: `Self-exclusion enabled for ${duration}` });
+    res.json({ success: true, message: `Self-exclusion enabled for ${duration}` });
   } catch (error) {
     logger.error('Self-exclusion error:', error);
-    res.status(500).json({ error: 'Failed to enable self-exclusion' });
+    res.status(500).json({ success: false, error: 'Failed to enable self-exclusion' });
   }
 });
 
@@ -450,29 +451,32 @@ router.get('/compliance/dashboard', authenticateToken, requireAdmin, async (req,
       new Date()
     );
 
-    // Get SAR reports
+    // Get SAR records. SARs are stored in compliance_audit (audit_type='aml',
+    // status='flagged') by complianceService.createSAR.
     const sars = await db.query(
-      `SELECT * FROM sar_reports 
-       WHERE created_at > NOW() - INTERVAL '7 days' 
+      `SELECT * FROM compliance_audit
+       WHERE audit_type = 'aml' AND status = 'flagged'
+       AND created_at > NOW() - INTERVAL '7 days'
        ORDER BY created_at DESC`
     );
 
     // Get cheat detections
     const cheats = await db.query(
-      `SELECT * FROM cheat_detection 
-       WHERE created_at > NOW() - INTERVAL '7 days' 
-       ORDER BY created_at DESC 
+      `SELECT * FROM cheat_detection
+       WHERE created_at > NOW() - INTERVAL '7 days'
+       ORDER BY created_at DESC
        LIMIT 20`
     );
 
     res.json({
+      success: true,
       report,
       sars: sars.rows,
       cheats: cheats.rows,
     });
   } catch (error) {
     logger.error('Compliance dashboard error:', error);
-    res.status(500).json({ error: 'Failed to get compliance dashboard' });
+    res.status(500).json({ success: false, error: 'Failed to get compliance dashboard' });
   }
 });
 
