@@ -128,7 +128,7 @@ has_service() {
   printf '%s\n' "$${COMPOSE_SERVICES[@]}" | grep -qx "$name"
 }
 
-SERVICES=(postgres redis backend websocket)
+SERVICES=(postgres redis backend)
 if has_service frontend; then
   SERVICES+=(frontend)
 fi

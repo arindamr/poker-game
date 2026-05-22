@@ -87,44 +87,6 @@ services:
       - poker_network
     restart: unless-stopped
 
-  # WebSocket Service
-  websocket:
-    build:
-      context: ../../backend
-      dockerfile: Dockerfile
-    container_name: poker_websocket
-    environment:
-      NODE_ENV: ${NODE_ENV}
-      PORT: 3001
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_USER: ${DB_USER}
-      DB_PASSWORD: ${DB_PASSWORD}
-      DB_NAME: ${DB_NAME}
-      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
-      LOG_LEVEL: ${LOG_LEVEL}
-      SERVICE_TYPE: websocket
-    ports:
-      - "3001:3001"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "node -e \"const p=process.env.PORT||3001; require('http').get('http://localhost:' + p + '/health', (r) => { if (r.statusCode !== 200) throw new Error(r.statusCode) })\""]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 5s
-    volumes:
-      - ../../backend/src:/app/src
-      - ../../backend/migrations:/app/migrations
-      - /app/node_modules
-    networks:
-      - poker_network
-    restart: unless-stopped
-
   # Nginx Load Balancer
   nginx:
     image: nginx:alpine
@@ -137,7 +99,6 @@ services:
     depends_on:
       - frontend
       - backend
-      - websocket
     networks:
       - poker_network
     restart: unless-stopped

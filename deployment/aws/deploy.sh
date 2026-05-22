@@ -75,7 +75,7 @@ has_service() {
   printf '%s\n' "${COMPOSE_SERVICES[@]}" | grep -qx "$name"
 }
 
-SERVICES=(postgres redis backend websocket)
+SERVICES=(postgres redis backend)
 if has_service frontend; then
   SERVICES+=(frontend)
 fi
@@ -89,7 +89,6 @@ docker compose --env-file "$ENV_FILE" up -d --build "${SERVICES[@]}"
 log "Waiting for healthy containers"
 wait_for_health poker_postgres
 wait_for_health poker_redis
-wait_for_health poker_websocket
 
 log "Checking backend health endpoint"
 if ! curl -fsS http://localhost:3000/health >/dev/null; then
