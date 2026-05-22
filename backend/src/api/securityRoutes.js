@@ -305,9 +305,9 @@ router.post('/kyc/initiate', authenticateToken, rateLimiter.middleware({ max: 5,
     const { firstName, lastName, dateOfBirth } = req.body;
 
     // Check sanctions list
-    const sanctioned = await complianceService.checkSanctionsList(userId, firstName, lastName);
+    const sanctionCheck = await complianceService.checkSanctionsList(userId, firstName, lastName);
 
-    if (sanctioned) {
+    if (sanctionCheck.sanctioned) {
       logger.warn(`User ${userId} is on sanctions list`);
       return res.status(403).json({ success: false, error: 'User is on sanctions list' });
     }
@@ -315,10 +315,11 @@ router.post('/kyc/initiate', authenticateToken, rateLimiter.middleware({ max: 5,
     // Initialize KYC
     const verificationId = await complianceService.initializeKYC(userId, req.user.email);
 
-    // Log KYC initiation
+    // Log KYC initiation. compliance_audit.audit_type is NOT NULL and is the
+    // column the dashboard/report queries filter on.
     await db.query(
       `INSERT INTO compliance_audit
-       (user_id, verification_type, status, details)
+       (user_id, audit_type, status, details)
        VALUES ($1, $2, $3, $4)`,
       [userId, 'kyc', 'initiated', JSON.stringify({ firstName, lastName, dateOfBirth })]
     );
