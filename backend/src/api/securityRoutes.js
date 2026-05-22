@@ -11,6 +11,7 @@ const antiCheatEngine = require('../game/antiCheatEngine');
 const complianceService = require('../utils/complianceService');
 const rateLimiter = require('../middleware/enhancedRateLimiter');
 const { authenticateToken, authorizeRole } = require('./middleware/authMiddleware');
+const { securityValidation } = require('../middleware/inputValidation');
 const logger = require('../utils/logger');
 
 const isSchemaError = (error) => {

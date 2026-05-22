@@ -8,7 +8,7 @@ const {
 } = require('../controllers/authController');
 const { authenticateToken } = require('../middleware/authMiddleware');
 const { loginLimiter, registrationLimiter } = require('../middleware/rateLimiter');
-const { authValidation } = require('../middleware/inputValidation');
+const { authValidation } = require('../../middleware/inputValidation');
 
 const router = express.Router();
 

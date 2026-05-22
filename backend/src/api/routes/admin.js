@@ -1,7 +1,7 @@
 const express = require('express');
 const { param, body, query } = require('express-validator');
 const { authenticateToken, requireAdmin } = require('../middleware/authMiddleware');
-const { validate } = require('../middleware/inputValidation');
+const { validate } = require('../../middleware/inputValidation');
 const {
   getAllTables,
   deleteTable,

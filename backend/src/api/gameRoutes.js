@@ -12,6 +12,7 @@ const antiCheatEngine = require('../game/antiCheatEngine');
 const complianceService = require('../utils/complianceService');
 const rateLimiter = require('../middleware/enhancedRateLimiter');
 const { authenticateToken } = require('./middleware/authMiddleware');
+const { gameValidation } = require('../middleware/inputValidation');
 
 // In-memory engine instances per game table
 const activeEngines = new Map();
