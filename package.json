@@ -1,0 +1,27 @@
+{
+  "name": "poker-game",
+  "version": "1.0.0",
+  "description": "A cross-platform multiplayer poker application with enterprise-grade security, built with Flutter (iOS/Android/Web) and Node.js backend, featuring real-time WebSocket synchronization, advanced anti-cheat detection, and comprehensive compliance management.",
+  "main": "test-client.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/arindamr/poker-game.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/arindamr/poker-game/issues"
+  },
+  "homepage": "https://github.com/arindamr/poker-game#readme",
+  "devDependencies": {
+    "playwright": "^1.60.0"
+  }
+}
