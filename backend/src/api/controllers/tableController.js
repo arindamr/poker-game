@@ -1,9 +1,9 @@
 const GameTable = require('../../models/GameTable');
 const db = require('../../config/database');
 const { hashPassword, generateRandomToken } = require('../../utils/crypto');
-const { getEngine, resetEngine } = require('../../game/engineManager');
+const { getEngine, resetEngine, withTableLock } = require('../../game/engineManager');
 const { decideBotAction } = require('../../game/botStrategy');
-const { ACTION } = require('../../game/gameState');
+const { ACTION, GameRuleError } = require('../../game/gameState');
 const { getIO } = require('../../websocket/io');
 const { asyncHandler } = require('../middleware/errorHandler');
 const { validateTableCreation } = require('../../utils/validators');
@@ -11,6 +11,28 @@ const logger = require('../../utils/logger');
 
 const nextHandConfirmations = new Map();
 const lastCompletedRoundByTable = new Map();
+const lastPersistedGameByTable = new Map();
+
+/**
+ * Write engine stacks back to table_seats once per completed hand so
+ * winnings survive engine resets.
+ */
+const persistStacksIfCompleted = async (tableId, engine, roundResult) => {
+  if (!roundResult?.gameId) return;
+  if (lastPersistedGameByTable.get(tableId) === roundResult.gameId) return;
+
+  await db.transaction(async (client) => {
+    for (const player of engine.stateMachine.players) {
+      await client.query(
+        `UPDATE table_seats SET stack = $1
+         WHERE table_id = $2 AND player_id = $3 AND is_seated = true`,
+        [player.stack, tableId, player.id],
+      );
+    }
+  });
+  lastPersistedGameByTable.set(tableId, roundResult.gameId);
+  logger.info('Persisted stacks after hand', { tableId, gameId: roundResult.gameId });
+};
 
 const getTableStatusBySeatedCount = (seatedCount) => (
   seatedCount >= 2 ? 'RUNNING' : 'WAITING'
@@ -26,6 +48,7 @@ const syncTableCounters = async (client, tableId, seatedCount) => {
 const clearNextHandTracking = (tableId) => {
   nextHandConfirmations.delete(tableId);
   lastCompletedRoundByTable.delete(tableId);
+  lastPersistedGameByTable.delete(tableId);
 };
 
 const getHumanRowsForTable = async (tableId) => db.getAll(
@@ -125,6 +148,40 @@ const processBotTurns = async (engine, tableId) => {
   }
 
   return botActions;
+};
+
+/**
+ * Advance pending bot turns outside the request cycle so reads stay
+ * side-effect free. Runs under the table lock after the caller releases it.
+ */
+const scheduleBotDrive = (tableId) => {
+  setTimeout(() => {
+    withTableLock(tableId, async () => {
+      const engine = await getEngine(tableId);
+      if (engine.isCompleted()) return;
+
+      const botActions = await processBotTurns(engine, tableId);
+      if (botActions.length === 0) return;
+
+      const roundResult = engine.isCompleted() ? engine.getRoundSummary() : null;
+      await persistStacksIfCompleted(tableId, engine, roundResult);
+
+      const io = getIO();
+      if (io) {
+        io.to(`table:${tableId}`).emit('GAME_STATE_UPDATE', {
+          tableId,
+          state: engine.getGameState(),
+        });
+        io.to(`table:${tableId}`).emit('BOT_ACTIONS', {
+          tableId,
+          actions: botActions,
+        });
+      }
+      emitRoundCompleted(io, tableId, roundResult);
+    }).catch((error) => {
+      logger.warn('Bot drive failed', { tableId, error: error.message });
+    });
+  }, 0);
 };
 
 const emitRoundCompleted = (io, tableId, roundResult) => {
@@ -562,7 +619,11 @@ const leaveTable = asyncHandler(async (req, res) => {
 /**
  * Process a player action and let bots respond
  */
-const playerAction = asyncHandler(async (req, res) => {
+const playerAction = asyncHandler(async (req, res) => (
+  withTableLock(req.params.tableId, () => playerActionImpl(req, res))
+));
+
+const playerActionImpl = async (req, res) => {
   const { tableId } = req.params;
   const userId = req.user.sub;
   const { action, amount = 0 } = req.body || {};
@@ -593,8 +654,7 @@ const playerAction = asyncHandler(async (req, res) => {
     await engine.processPlayerAction(userId, actionKey, numericAmount);
   } catch (error) {
     const message = error?.message || 'Failed to process action';
-    const gameActionError = /insufficient chips|not player turn|cannot |raise must|unknown action|already folded|player not found/i.test(message);
-    if (gameActionError) {
+    if (error instanceof GameRuleError) {
       logger.warn('Invalid player action rejected', {
         tableId,
         userId,
@@ -612,6 +672,7 @@ const playerAction = asyncHandler(async (req, res) => {
 
   const botActions = engine.isCompleted() ? [] : await processBotTurns(engine, tableId);
   const roundResult = engine.isCompleted() ? engine.getRoundSummary() : null;
+  await persistStacksIfCompleted(tableId, engine, roundResult);
   const humanRows = roundResult ? await getHumanRowsForTable(tableId) : [];
   const nextHand = buildNextHandStatus(tableId, userId, roundResult, humanRows);
 
@@ -644,12 +705,16 @@ const playerAction = asyncHandler(async (req, res) => {
     roundResult,
     nextHand,
   });
-});
+};
 
 /**
  * Get current game state (engine snapshot)
  */
-const getGameState = asyncHandler(async (req, res) => {
+const getGameState = asyncHandler(async (req, res) => (
+  withTableLock(req.params.tableId, () => getGameStateImpl(req, res))
+));
+
+const getGameStateImpl = async (req, res) => {
   const { tableId } = req.params;
   const userId = req.user?.sub;
   const table = await GameTable.findById(tableId);
@@ -681,37 +746,33 @@ const getGameState = asyncHandler(async (req, res) => {
   }
 
   const engine = await getEngine(tableId);
-  const botActions = engine.isCompleted() ? [] : await processBotTurns(engine, tableId);
   const roundResult = engine.isCompleted() ? engine.getRoundSummary() : null;
+  await persistStacksIfCompleted(tableId, engine, roundResult);
   const humanRows = roundResult ? await getHumanRowsForTable(tableId) : [];
   const nextHand = buildNextHandStatus(tableId, userId, roundResult, humanRows);
 
-  const io = getIO();
-  if (io && botActions.length > 0) {
-    io.to(`table:${tableId}`).emit('GAME_STATE_UPDATE', {
-      tableId,
-      state: engine.getGameState(),
-    });
-    io.to(`table:${tableId}`).emit('BOT_ACTIONS', {
-      tableId,
-      actions: botActions,
-    });
+  // Reads don't mutate game state; pending bot turns advance after we respond.
+  if (!engine.isCompleted()) {
+    scheduleBotDrive(tableId);
   }
-  emitRoundCompleted(io, tableId, roundResult);
 
   res.json({
     success: true,
     state: engine.getGameStateForPlayer(userId),
-    botActions,
+    botActions: [],
     roundResult,
     nextHand,
   });
-});
+};
 
 /**
  * Confirm player readiness for next hand. Next hand starts when all human players confirm.
  */
-const confirmNextHand = asyncHandler(async (req, res) => {
+const confirmNextHand = asyncHandler(async (req, res) => (
+  withTableLock(req.params.tableId, () => confirmNextHandImpl(req, res))
+));
+
+const confirmNextHandImpl = async (req, res) => {
   const { tableId } = req.params;
   const userId = req.user.sub;
 
@@ -752,6 +813,7 @@ const confirmNextHand = asyncHandler(async (req, res) => {
   }
 
   const roundResult = engine.getRoundSummary();
+  await persistStacksIfCompleted(tableId, engine, roundResult);
   const humanRows = await getHumanRowsForTable(tableId);
   syncRoundTracking(tableId, roundResult);
   const confirmedSet = nextHandConfirmations.get(tableId) || new Set();
@@ -807,7 +869,7 @@ const confirmNextHand = asyncHandler(async (req, res) => {
     roundResult,
     nextHand,
   });
-});
+};
 
 /**
  * Get seat availability

@@ -26,6 +26,9 @@ export default function Login() {
       if (token && response.success) {
         apiClient.setToken(token);
         localStorage.setItem('authToken', token);
+        if (response.tokens?.refreshToken) {
+          apiClient.setRefreshToken(response.tokens.refreshToken);
+        }
         if (response.user?.id) {
           localStorage.setItem('userId', response.user.id);
         }

@@ -213,13 +213,15 @@ class PokerEngine {
       if (activePlayers.length === 1) {
         // Everyone folded - last player wins
         const winner = activePlayers[0];
+        const winAmount = this.potCalculator.getPot();
+        winner.stack += winAmount;
         const results = [{
           playerId: winner.id,
           position: winner.seat,
           holeCards: (this.playerHands[winner.id] || []).join(''),
           bestHand: 'Fold',
-          finalStack: winner.stack + this.potCalculator.getPot(),
-          winAmount: this.potCalculator.getPot(),
+          finalStack: winner.stack,
+          winAmount,
           finishPosition: 1,
         }];
 
@@ -300,7 +302,7 @@ class PokerEngine {
         handEvaluations: playerEvaluations,
       });
 
-      // Create results for all active players based on distribution
+      // Credit payouts to player stacks, then build results
       const results = [];
       const payoutByPlayer = distribution.distribution || {};
       const sortedPlayers = [...activePlayers].sort(
@@ -309,13 +311,14 @@ class PokerEngine {
 
       sortedPlayers.forEach((player, index) => {
         const winAmount = payoutByPlayer[player.id] || 0;
+        player.stack += winAmount;
         const bestHand = playerEvaluations[player.id]?.name || 'Unknown';
         results.push({
           playerId: player.id,
           position: player.seat,
           holeCards: this.playerHands[player.id].join(''),
           bestHand,
-          finalStack: player.stack + winAmount,
+          finalStack: player.stack,
           winAmount,
           finishPosition: index + 1,
         });

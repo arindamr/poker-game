@@ -17,10 +17,13 @@ export interface ApiResponse<T> {
 
 export class ApiClient {
   private token: string | null = null;
+  private refreshToken: string | null = null;
+  private refreshPromise: Promise<boolean> | null = null;
 
   constructor() {
     if (typeof window !== 'undefined') {
       this.token = localStorage.getItem('authToken');
+      this.refreshToken = localStorage.getItem('refreshToken');
     }
   }
 
@@ -31,11 +34,51 @@ export class ApiClient {
     }
   }
 
+  setRefreshToken(token: string) {
+    this.refreshToken = token;
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('refreshToken', token);
+    }
+  }
+
   clearToken() {
     this.token = null;
+    this.refreshToken = null;
     if (typeof window !== 'undefined') {
       localStorage.removeItem('authToken');
+      localStorage.removeItem('refreshToken');
     }
+  }
+
+  /**
+   * Exchange the refresh token for a new access token. Concurrent 401s share
+   * a single refresh request.
+   */
+  private async tryRefresh(): Promise<boolean> {
+    if (!this.refreshToken) return false;
+    if (!this.refreshPromise) {
+      this.refreshPromise = (async () => {
+        try {
+          const response = await fetch(`${API_URL}/api/auth/refresh`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ refreshToken: this.refreshToken }),
+          });
+          if (!response.ok) return false;
+          const data = await response.json();
+          if (data?.accessToken) {
+            this.setToken(data.accessToken);
+            return true;
+          }
+          return false;
+        } catch {
+          return false;
+        } finally {
+          this.refreshPromise = null;
+        }
+      })();
+    }
+    return this.refreshPromise;
   }
 
   private getHeaders() {
@@ -63,7 +106,23 @@ export class ApiClient {
         options.body = JSON.stringify(body);
       }
 
-      const response = await fetch(`${API_URL}${path}`, options);
+      let response = await fetch(`${API_URL}${path}`, options);
+
+      // Expired access token: refresh once and retry the request
+      if (
+        response.status === 401 &&
+        this.token &&
+        !path.startsWith('/api/auth/')
+      ) {
+        const refreshed = await this.tryRefresh();
+        if (refreshed) {
+          options.headers = this.getHeaders();
+          response = await fetch(`${API_URL}${path}`, options);
+        } else {
+          this.clearToken();
+        }
+      }
+
       const contentType = response.headers.get('content-type') || '';
       let data: any = null;
       if (contentType.includes('application/json')) {

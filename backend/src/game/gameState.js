@@ -27,6 +27,17 @@ const ACTION = {
 };
 
 /**
+ * Error type for illegal-but-expected player actions (acting out of turn,
+ * undersized raises, etc.) so callers can map them to 400 responses.
+ */
+class GameRuleError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'GameRuleError';
+  }
+}
+
+/**
  * Game state machine for Texas Hold'em
  */
 class GameStateMachine {
@@ -40,8 +51,6 @@ class GameStateMachine {
     this.state = GAME_STATE.PRE_GAME;
     this.deck = [];
     this.communityCards = [];
-    this.pot = 0;
-    this.sidePots = [];
     this.currentBet = 0;
     this.minRaise = bigBlind; // minimum raise increment (starts at BB, updates after each raise)
     this.actions = [];
@@ -74,8 +83,6 @@ class GameStateMachine {
   startHand() {
     this.state = GAME_STATE.PRE_GAME;
     this.communityCards = [];
-    this.pot = 0;
-    this.sidePots = [];
     this.currentBet = 0;
     this.minRaise = this.bigBlind;
     this.actions = [];
@@ -254,38 +261,20 @@ class GameStateMachine {
   }
 
   /**
-   * Post small blind
-   */
-  postSmallBlind(playerId) {
-    this.currentBet = this.smallBlind;
-    this.pot += this.smallBlind;
-    logger.debug('Small blind posted', { playerId, amount: this.smallBlind });
-  }
-
-  /**
-   * Post big blind
-   */
-  postBigBlind(playerId) {
-    this.currentBet = this.bigBlind;
-    this.pot += this.bigBlind;
-    logger.debug('Big blind posted', { playerId, amount: this.bigBlind });
-  }
-
-  /**
    * Process player action
    */
   processAction(playerId, action, amount = 0) {
     if (this.folded.has(playerId)) {
-      throw new Error('Player has already folded');
+      throw new GameRuleError('Player has already folded');
     }
 
     const player = this.activePlayers.find(p => p.id === playerId);
     if (!player) {
-      throw new Error('Player not found');
+      throw new GameRuleError('Player not found');
     }
 
     if (this.currentActorId && playerId !== this.currentActorId) {
-      throw new Error('Not player turn');
+      throw new GameRuleError('Not player turn');
     }
 
     // For ALL_IN we need to determine after processing whether it re-opens betting
@@ -301,7 +290,7 @@ class GameStateMachine {
         // Allow check when player has already matched the current bet (e.g. BB's option)
         const alreadyBetCheck = this.playerBetsThisRound[playerId] || 0;
         if (this.currentBet > 0 && alreadyBetCheck < this.currentBet) {
-          throw new Error('Cannot check when bet is active');
+          throw new GameRuleError('Cannot check when bet is active');
         }
         logger.debug('Player checked', { playerId });
         break;
@@ -311,7 +300,7 @@ class GameStateMachine {
         const alreadyBetCall = this.playerBetsThisRound[playerId] || 0;
         const callAmount = Math.min(this.currentBet - alreadyBetCall, player.stack);
         if (callAmount <= 0) {
-          throw new Error('Cannot call — no additional amount needed');
+          throw new GameRuleError('Cannot call — no additional amount needed');
         }
         player.stack -= callAmount;
         this.playerBetsThisRound[playerId] = alreadyBetCall + callAmount;
@@ -324,14 +313,14 @@ class GameStateMachine {
         const alreadyBetRaise = this.playerBetsThisRound[playerId] || 0;
         const minRaiseAmount = this.currentBet + this.minRaise;
         if (amount < minRaiseAmount) {
-          throw new Error(
+          throw new GameRuleError(
             `Raise must be at least ${minRaiseAmount} (current bet ${this.currentBet} + min raise ${this.minRaise})`,
           );
         }
         // amount is the total raise-to level; player only pays the net difference
         const netRaise = amount - alreadyBetRaise;
         if (netRaise <= 0 || netRaise > player.stack) {
-          throw new Error('Insufficient chips for raise');
+          throw new GameRuleError('Insufficient chips for raise');
         }
         player.stack -= netRaise;
         this.playerBetsThisRound[playerId] = amount;
@@ -344,7 +333,7 @@ class GameStateMachine {
 
       case ACTION.ALL_IN: {
         if (player.stack === 0) {
-          throw new Error('Player has no chips to go all-in');
+          throw new GameRuleError('Player has no chips to go all-in');
         }
         const alreadyBetAllIn = this.playerBetsThisRound[playerId] || 0;
         const allInNet = player.stack;
@@ -367,7 +356,7 @@ class GameStateMachine {
       }
 
       default:
-        throw new Error(`Unknown action: ${action}`);
+        throw new GameRuleError(`Unknown action: ${action}`);
     }
 
     this.actions.push({
@@ -477,53 +466,23 @@ class GameStateMachine {
   }
 
   /**
-   * Get current pot
-   */
-  getPot() {
-    return this.pot;
-  }
-
-  /**
    * Get game state
    */
   getState() {
     return {
       gameId: this.gameId,
       state: this.state,
-      pot: this.pot,
       communityCards: this.communityCards,
       activePlayers: this.getActivePlayers().length,
       currentBet: this.currentBet,
       currentActorId: this.currentActorId,
     };
   }
-
-  /**
-   * Reset for next hand
-   */
-  resetForNextHand() {
-    this.state = GAME_STATE.PRE_GAME;
-    this.handNumber++;
-    this.deck = [];
-    this.communityCards = [];
-    this.pot = 0;
-    this.sidePots = [];
-    this.currentBet = 0;
-    this.actions = [];
-    this.folded.clear();
-    this.buttonPosition = (this.buttonPosition + 1) % this.activePlayers.length;
-    this.pendingActions.clear();
-    this.currentActorId = null;
-    this.currentActorIndex = 0;
-    this.lastAggressorId = null;
-
-    this.initializeDeck();
-    logger.debug('Game reset for next hand', { handNumber: this.handNumber });
-  }
 }
 
 module.exports = {
   GameStateMachine,
+  GameRuleError,
   GAME_STATE,
   ACTION,
 };

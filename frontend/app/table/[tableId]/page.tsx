@@ -5,314 +5,26 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ApiClient, API_URL } from '@/lib/api';
 import { io, Socket } from 'socket.io-client';
+import ChatPanel, { ChatMessage } from './ChatPanel';
 
-interface TableDetails {
-  id: string;
-  name: string;
-  status: string;
-  smallBlind: number;
-  bigBlind: number;
-  minBuyIn: number;
-  maxBuyIn: number;
-  maxSeats: number;
-  currentPlayers: number;
-}
-
-interface SeatInfo {
-  total: number;
-  available: number;
-  occupied: number;
-  seats?: Array<{ position: number; occupied: boolean; playerId: string | null; username?: string | null; isBot?: boolean }>;
-  yourSeat?: number | null;
-}
-
-type GameState = {
-  gameId?: string;
-  state?: string;
-  pot?: number;
-  communityCards?: string[];
-  players?: Array<{ id: string; seat: number; stack: number; folded?: boolean }>;
-  activePlayers?: number;
-  currentBet?: number;
-  minRaise?: number;
-  playerBetsThisRound?: Record<string, number>;
-  currentActorId?: string | null;
-  playerHand?: string[] | null;
-};
-
-type GamePlayer = NonNullable<GameState['players']>[number];
-
-type ActionLogEntry = {
-  id: string;
-  message: string;
-  street?: string;
-  timestamp: string;
-};
-
-const STREET_LABELS: Record<string, string> = {
-  PRE_FLOP: 'Pre-Flop',
-  FLOP: 'Flop',
-  TURN: 'Turn',
-  RIVER: 'River',
-  SHOWDOWN: 'Showdown',
-};
-
-type SeatActionBadge = {
-  id: string;
-  label: string;
-  amount?: number;
-  isBot?: boolean;
-};
-
-type RoundResult = {
-  gameId?: string;
-  winners?: Array<{ playerId: string; hand?: string | { name?: string } }>;
-  players?: Array<{
-    playerId: string;
-    seat: number;
-    holeCards?: string[];
-    winAmount?: number;
-    bestHand?: string | null;
-  }>;
-  completedAt?: string;
-};
-
-type NextHandStatus = {
-  required: number;
-  confirmed: number;
-  hasConfirmed: boolean;
-  waitingFor: Array<{ playerId: string; username: string; seat: number }>;
-};
-
-const HAND_RANK_ORDER: Record<string, number> = {
-  'Royal Flush': 10,
-  'Straight Flush': 9,
-  'Four of a Kind': 8,
-  'Full House': 7,
-  Flush: 6,
-  Straight: 5,
-  'Three of a Kind': 4,
-  'Two Pair': 3,
-  'One Pair': 2,
-  'High Card': 1,
-  Fold: 0,
-  Folded: 0,
-};
-
-const SUIT_SYMBOLS: Record<string, string> = {
-  h: '♥',
-  d: '♦',
-  c: '♣',
-  s: '♠',
-};
-
-const parseCard = (card: string) => {
-  if (!card || card.length < 2) {
-    return { rank: '?', suit: '?', isRed: false };
-  }
-  const suitKey = card[card.length - 1].toLowerCase();
-  const rankKey = card.slice(0, -1).toUpperCase();
-  return {
-    rank: rankKey === 'T' ? '10' : rankKey,
-    suit: SUIT_SYMBOLS[suitKey] || '?',
-    isRed: suitKey === 'h' || suitKey === 'd',
-  };
-};
-
-const PIP_LAYOUTS: Record<string, Array<[number, number]>> = {
-  A: [[50, 50]],
-  '2': [[50, 20], [50, 80]],
-  '3': [[50, 20], [50, 50], [50, 80]],
-  '4': [[25, 20], [75, 20], [25, 80], [75, 80]],
-  '5': [[25, 20], [75, 20], [50, 50], [25, 80], [75, 80]],
-  '6': [[25, 20], [75, 20], [25, 50], [75, 50], [25, 80], [75, 80]],
-  '7': [[25, 20], [75, 20], [50, 35], [25, 50], [75, 50], [25, 80], [75, 80]],
-  '8': [[25, 20], [75, 20], [25, 40], [75, 40], [25, 60], [75, 60], [25, 80], [75, 80]],
-  '9': [[25, 18], [75, 18], [25, 35], [75, 35], [50, 50], [25, 65], [75, 65], [25, 82], [75, 82]],
-  '10': [[25, 16], [75, 16], [25, 32], [75, 32], [25, 48], [75, 48], [25, 64], [75, 64], [25, 80], [75, 80]],
-};
-
-const renderCardCenter = (rank: string, suit: string, textColor: string) => {
-  if (rank === 'K' || rank === 'Q' || rank === 'J') {
-    const roleLabel = rank === 'K' ? 'KING' : rank === 'Q' ? 'QUEEN' : 'JACK';
-    const icon = rank === 'K' ? '♔' : rank === 'Q' ? '♕' : '⚔';
-    return (
-      <div className={`absolute inset-[18%] rounded-md border border-slate-300 bg-slate-50 flex flex-col items-center justify-center ${textColor}`}>
-        <div className="text-2xl leading-none">{icon}</div>
-        <div className="text-xl font-bold leading-none mt-1">{rank}</div>
-        <div className="text-base leading-none mt-1">{suit}</div>
-        <div className="text-[9px] tracking-widest mt-1">{roleLabel}</div>
-      </div>
-    );
-  }
-
-  const pips = PIP_LAYOUTS[rank] || [];
-  const pipSize = rank === 'A' ? 'text-4xl' : rank === '10' ? 'text-lg' : 'text-2xl';
-  return (
-    <div className="absolute inset-0">
-      {pips.map(([left, top], i) => (
-        <span
-          key={`${rank}-${left}-${top}-${i}`}
-          className={`absolute -translate-x-1/2 -translate-y-1/2 leading-none ${pipSize} ${textColor}`}
-          style={{ left: `${left}%`, top: `${top}%` }}
-        >
-          {suit}
-        </span>
-      ))}
-    </div>
-  );
-};
-
-const renderPlayingCard = (card: string, key: string, compact = false) => {
-  const parsed = parseCard(card);
-  const textColor = parsed.isRed ? 'text-red-600' : 'text-slate-900';
-  const sizeClasses = compact ? 'w-16 h-24' : 'w-20 h-28';
-  const cornerRankClass = compact ? 'text-xs' : 'text-sm';
-  const cornerSuitClass = compact ? 'text-sm' : 'text-base';
-
-  return (
-    <div
-      key={key}
-      className={`relative ${sizeClasses} rounded-xl border-2 border-slate-300 bg-gradient-to-b from-white to-slate-100 shadow-[0_8px_20px_rgba(0,0,0,0.45)]`}
-    >
-      <div className={`absolute left-2 top-1 leading-none font-bold ${textColor} ${cornerRankClass}`}>
-        <div>{parsed.rank}</div>
-        <div className={cornerSuitClass}>{parsed.suit}</div>
-      </div>
-      {renderCardCenter(parsed.rank, parsed.suit, textColor)}
-      <div className={`absolute right-2 bottom-1 leading-none font-bold rotate-180 ${textColor} ${cornerRankClass}`}>
-        <div>{parsed.rank}</div>
-        <div className={cornerSuitClass}>{parsed.suit}</div>
-      </div>
-    </div>
-  );
-};
-
-const renderCardBack = (key: string, compact = false) => {
-  const sizeClasses = compact ? 'w-16 h-24' : 'w-20 h-28';
-  return (
-    <div
-      key={key}
-      className={`relative ${sizeClasses} rounded-xl border-2 border-rose-200/80 bg-gradient-to-br from-rose-400 to-rose-500 shadow-[0_8px_20px_rgba(0,0,0,0.45)]`}
-    >
-      <div className="absolute inset-1 rounded-lg border border-rose-100/70 bg-[radial-gradient(circle_at_20%_20%,rgba(255,255,255,0.3),transparent_45%),repeating-linear-gradient(45deg,rgba(255,255,255,0.14)_0,rgba(255,255,255,0.14)_6px,rgba(255,255,255,0.05)_6px,rgba(255,255,255,0.05)_12px)]" />
-      <div className="absolute inset-0 flex items-center justify-center text-3xl text-white/90">∞</div>
-    </div>
-  );
-};
-
-const RING_LAYOUT_9: Array<{ x: number; y: number }> = [
-  { x: 50, y: 6 },
-  { x: 81, y: 16 },
-  { x: 93, y: 43 },
-  { x: 81, y: 73 },
-  { x: 62, y: 89 },
-  { x: 38, y: 89 },
-  { x: 19, y: 73 },
-  { x: 7, y: 43 },
-  { x: 19, y: 16 },
-];
-
-const getSeatPosition = (index: number, total: number) => {
-  if (total === 9) {
-    return RING_LAYOUT_9[index] || { x: 50, y: 50 };
-  }
-  const angle = ((Math.PI * 2) / Math.max(total, 2)) * index - Math.PI / 2;
-  return {
-    x: 50 + Math.cos(angle) * 43,
-    y: 50 + Math.sin(angle) * 40,
-  };
-};
-
-const formatCurrency = (value: unknown) => {
-  const numeric = Number(value ?? 0);
-  if (!Number.isFinite(numeric)) {
-    return '£0.00';
-  }
-  if (Math.abs(numeric) < 1) {
-    return `${Math.round(numeric * 100)}p`;
-  }
-  return `£${numeric.toFixed(2)}`;
-};
-
-const formatActionLabel = (rawAction: string) => {
-  const action = rawAction.toUpperCase();
-  if (action === 'ALL_IN') return 'All In';
-  if (action === 'RAISE') return 'Raise';
-  if (action === 'CALL') return 'Call';
-  if (action === 'CHECK') return 'Check';
-  if (action === 'BET') return 'Bet';
-  if (action === 'FOLD') return 'Fold';
-  return action || 'Act';
-};
-
-const getActionBadgeClasses = (rawAction: string) => {
-  const action = rawAction.toUpperCase();
-  if (action === 'FOLD') {
-    return 'bg-rose-600/95 border-rose-300/60 text-white';
-  }
-  if (action === 'CHECK') {
-    return 'bg-slate-700/95 border-slate-300/40 text-slate-100';
-  }
-  if (action === 'CALL') {
-    return 'bg-amber-500/95 border-amber-200/60 text-slate-950';
-  }
-  if (action === 'RAISE' || action === 'BET' || action === 'ALL_IN') {
-    return 'bg-emerald-500/95 border-emerald-200/60 text-slate-950';
-  }
-  return 'bg-cyan-600/95 border-cyan-200/60 text-white';
-};
-
-const getWinnerLabel = (
-  winnerId: string,
-  seats: SeatInfo | null,
-  yourSeat: number | null | undefined,
-) => {
-  const seat = seats?.seats?.find((s) => s.playerId === winnerId);
-  if (!seat) return `Player ${winnerId.slice(0, 6)}`;
-  if (yourSeat !== undefined && seat.position === yourSeat) return 'You';
-  return seat.username || `Seat ${seat.position + 1}`;
-};
-
-const buildWinningExplanation = (
-  roundResult: RoundResult,
-  seats: SeatInfo | null,
-  yourSeat: number | null | undefined,
-) => {
-  const winners = roundResult.winners || [];
-  const players = roundResult.players || [];
-  if (winners.length === 0 || players.length === 0) {
-    return 'The hand completed, but winner details are unavailable.';
-  }
-
-  const winnerNames = winners.map((winner) => getWinnerLabel(winner.playerId, seats, yourSeat));
-  const winnerHandName = typeof winners[0].hand === 'string'
-    ? winners[0].hand
-    : (winners[0].hand?.name || 'winning hand');
-
-  const winnerPlayerIds = new Set(winners.map((winner) => winner.playerId));
-  const opponents = players.filter((player) => !winnerPlayerIds.has(player.playerId));
-  const allOpponentsFolded = opponents.length > 0
-    && opponents.every((player) => !player.bestHand || player.bestHand === 'Folded' || player.bestHand === 'Fold');
-
-  if (winnerHandName === 'Fold' || allOpponentsFolded) {
-    return `${winnerNames.join(', ')} won because all other players folded before showdown.`;
-  }
-
-  const winnerRank = HAND_RANK_ORDER[winnerHandName] || 0;
-  const bestOpponent = opponents
-    .map((player) => player.bestHand || 'Folded')
-    .sort((a, b) => (HAND_RANK_ORDER[b] || 0) - (HAND_RANK_ORDER[a] || 0))[0];
-  const opponentRank = HAND_RANK_ORDER[bestOpponent || 'Folded'] || 0;
-
-  if (winnerRank > opponentRank) {
-    return `${winnerNames.join(', ')} won at showdown with ${winnerHandName}, which outranks ${bestOpponent || 'the opposing hand'}.`;
-  }
-  if (winnerRank === opponentRank) {
-    return `${winnerNames.join(', ')} won with ${winnerHandName}; tie-break kickers/board combination decided the pot split.`;
-  }
-  return `${winnerNames.join(', ')} won at showdown with ${winnerHandName}.`;
-};
+import {
+  TableDetails,
+  SeatInfo,
+  GameState,
+  GamePlayer,
+  ActionLogEntry,
+  STREET_LABELS,
+  SeatActionBadge,
+  RoundResult,
+  NextHandStatus,
+  getSeatPosition,
+  formatCurrency,
+  formatActionLabel,
+  getActionBadgeClasses,
+  getWinnerLabel,
+  buildWinningExplanation,
+} from './tableUtils';
+import { renderPlayingCard, renderCardBack } from './cards';
 
 export default function TablePage() {
   const router = useRouter();
@@ -342,6 +54,7 @@ export default function TablePage() {
   const [winnerBannerText, setWinnerBannerText] = useState('');
   const [phasePulseKey, setPhasePulseKey] = useState(0);
   const [actionTimeLeft, setActionTimeLeft] = useState<number | null>(null);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const actionTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   // When true, the current player just submitted an action and bot actions will be logged
   // from the REST response — suppress the socket BOT_ACTIONS event to avoid duplicates.
@@ -723,6 +436,20 @@ export default function TablePage() {
       appendBotActions(actions);
     });
 
+    socket.on('CHAT_MESSAGE_BROADCAST', (payload) => {
+      if (!payload?.message) return;
+      setChatMessages((prev) => [
+        ...prev.slice(-99),
+        {
+          id: `chat-${payload.timestamp || Date.now()}-${payload.playerId || ''}-${prev.length}`,
+          playerId: payload.playerId,
+          username: payload.username,
+          message: payload.message,
+          timestamp: payload.timestamp || new Date().toISOString(),
+        },
+      ]);
+    });
+
     socket.on('PLAYER_JOINED', (payload) => {
       appendLog(`${payload?.username || 'Player'} joined the table.`, payload?.timestamp);
       fetchSeats();
@@ -751,12 +478,19 @@ export default function TablePage() {
     try {
       const client = new ApiClient();
       await client.post(`/api/v1/tables/${table.id}/join`);
+      // The socket room only admits seated players, so (re)join now that we have a seat
+      socketRef.current?.emit('JOIN_TABLE', { tableId: table.id }, () => {});
       await Promise.all([fetchTable(), fetchSeats(), fetchGameState()]);
     } catch (err: any) {
       setError(err.message || 'Failed to join table');
     } finally {
       setSeatAction(null);
     }
+  };
+
+  const handleSendChat = (text: string) => {
+    if (!table) return;
+    socketRef.current?.emit('CHAT_MESSAGE', { tableId: table.id, message: text }, () => {});
   };
 
   const handleLeave = async () => {
@@ -1096,6 +830,12 @@ export default function TablePage() {
                     ))
                   )}
                 </div>
+                <ChatPanel
+                  messages={chatMessages}
+                  onSend={handleSendChat}
+                  disabled={!isSeated}
+                  currentUserId={typeof window !== 'undefined' ? localStorage.getItem('userId') : null}
+                />
               </div>
             </div>
 
